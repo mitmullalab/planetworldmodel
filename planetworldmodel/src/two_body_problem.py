@@ -1,7 +1,11 @@
 import numpy as np
 from pydantic import BaseModel, Field
+from scipy.optimize import newton
 
 float_type = float | np.floating
+
+
+PARABOLIC_TOLERANCE = 1e-5  # A small tolerance for checking if e is close to 1
 
 
 class TwoBodyProblem(BaseModel):
@@ -26,6 +30,11 @@ class TwoBodyProblem(BaseModel):
         description="Angle in the x-y plane of the initial relative velocity vector",
     )
     gravitational_constant: float_type = 6.67430e-11
+
+
+def is_nearly_parabolic(e: float_type) -> bool:
+    """Check if the orbit is nearly parabolic."""
+    return np.abs(e - 1) < PARABOLIC_TOLERANCE
 
 
 def random_two_body_problem(
@@ -85,25 +94,36 @@ def random_two_body_problem(
     )
 
 
-def compute_parabolic_position(
-    u: float_type, h: np.ndarray, mu: float_type
-) -> np.ndarray:
-    """Compute the position vector for a parabolic orbit.
-    Assumes the entire orbit is in the x-y plane.
+def kepler_equation_elliptic(E: float_type, M: float_type, e: float_type) -> float_type:
+    """Kepler's Equation for elliptical orbits."""
+    return E - e * np.sin(E) - M
 
-    Args:
-        u: Anomaly angle
-        h: Specific angular momentum
-        mu: Gravitational parameter
 
-    Returns:
-        Position vector in the orbital plane.
-    """
-    p = np.linalg.norm(h) ** 2 / mu  # parameter of the parabola
-    r = p / 2 * (1 + np.cos(u))
-    x = r * np.cos(u)
-    y = r * np.sin(u)
-    return np.array([x, y, 0])
+def kepler_equation_hyperbolic(
+    H: float_type, M: float_type, e: float_type
+) -> float_type:
+    """Kepler's Equation for hyperbolic orbits."""
+    return e * np.sinh(H) - H - M
+
+
+def solve_kepler_equation(M: float_type, e: float_type) -> float_type:
+    """Solve Kepler's Equation for elliptic and hyperbolic orbits."""
+    if is_nearly_parabolic(e):
+        return M
+    elif e < 1:  # Elliptic
+        return newton(lambda E: kepler_equation_elliptic(E, M, e), M)
+    else:  # Hyperbolic
+        return newton(lambda H: kepler_equation_hyperbolic(H, M, e), np.asinh(M / e))
+
+
+def true_anomaly_from_anomaly(anomaly: float_type, e: float_type) -> float_type:
+    """Convert eccentric/hyperbolic anomaly to true anomaly."""
+    if is_nearly_parabolic(e):
+        return anomaly  # For parabolic orbits, we directly use the "anomaly" as true anomaly
+    elif e < 1:  # Elliptic
+        return 2 * np.arctan(np.sqrt((1 + e) / (1 - e)) * np.tan(anomaly / 2))
+    else:  # Hyperbolic
+        return 2 * np.arctan(np.sqrt((e + 1) / (e - 1)) * np.tanh(anomaly / 2))
 
 
 def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray:
@@ -118,19 +138,20 @@ def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray
     Returns:
         Position vector in the orbital plane.
     """
-    if e < 1:  # Elliptical orbit
+    if is_nearly_parabolic(e):
+        p = 2 * a
+        r = p / (1 + np.cos(nu))
+    elif e < 1:  # Elliptical orbit
         r = a * (1 - e**2) / (1 + e * np.cos(nu))
     else:  # Hyperbolic orbit
         r = a * (e**2 - 1) / (1 + e * np.cos(nu))
-    x = r * np.cos(nu)
-    y = r * np.sin(nu)
-    z = 0
-    return np.array([x, y, z])
+    return np.array([r * np.cos(nu), r * np.sin(nu), 0])
 
 
 def generate_trajectories(
     problem: TwoBodyProblem,
     num_points: int = 100,
+    dt: float_type = 60 * 60,  # 1 hour
 ) -> tuple[np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
@@ -138,6 +159,7 @@ def generate_trajectories(
     Args:
         problem: TwoBodyProblem instance that contains the problem parameters.
         num_points: Number of points to generate along the orbit.
+        dt: Time step in seconds between each point.
 
     Returns:
         Tuple of two numpy arrays representing the trajectories of the two objects.
@@ -170,25 +192,32 @@ def generate_trajectories(
     # Semi-major axis
     a = 1 / (2 / r - v**2 / mass_red)
 
-    print(f"mass_tot: {mass_tot}, mass_red: {mass_red}")
-    print(f"r_0, v_0: {r_0}, {v_0}")
-    print(f"h_0: {h_0}")
-    print(f"e_vec: {e_vec}, e: {e}")
-    print(f"a: {a}")
+    # Generate equally spaced times
+    t = np.arange(num_points) * dt
 
     # Calculate orbit
-    if e == 1:  # Paraoblic orbit
-        u_vals = np.linspace(-np.pi, np.pi, num_points)
-        orbit_rel = np.array(
-            [compute_parabolic_position(u, h_0, mass_red) for u in u_vals]
-        )
+    if is_nearly_parabolic(e):
+        p = 2 * a
+        n = np.sqrt(mass_red / (2 * p**3))
+    elif e < 1:  # Elliptical orbit
+        n = np.sqrt(mass_red / a**3)  # Mean motion
+    else:  # Hyperbolic orbit
+        n = np.sqrt(-mass_red / a**3)
+    M_vals = n * t
+
+    if is_nearly_parabolic(e):
+        nu = 2 * np.arctan(M_vals)
     else:
-        if e < 1:  # Elliptical orbit
-            nu_vals = np.linspace(0, 2 * np.pi, num_points)
-        else:  # Hyperbolic orbit
-            nu_max = np.arccos(-1 / e)
-            nu_vals = np.linspace(-nu_max, nu_max, num_points)
-        orbit_rel = np.array([compute_position(nu, a, e) for nu in nu_vals])
+        # Solve Kepler's equation and compute true anomaly
+        nu = np.array(
+            [
+                true_anomaly_from_anomaly(solve_kepler_equation(Mi, e), e)
+                for Mi in M_vals
+            ]
+        )
+
+    # Calculate orbit
+    orbit_rel = np.array([compute_position(nui, a, e) for nui in nu])
 
     # Calculate the two objects' orbits
     orbit_1 = -orbit_rel * (problem.mass_2 / mass_tot)
