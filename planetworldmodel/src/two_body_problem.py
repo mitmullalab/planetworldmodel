@@ -94,6 +94,37 @@ def random_two_body_problem(
     )
 
 
+def calculate_orbital_parameters(
+    r: float_type, v: float_type, mass_red: float_type
+) -> tuple[float_type, float_type]:
+    """
+    Calculate orbital parameters (semi-major axis or parabola parameter, and eccentricity).
+
+    Args:
+        r: Magnitude of the position vector
+        v: Magnitude of the velocity vector
+        mass_red: Reduced mass of the system (G * (m1 + m2))
+
+    Returns:
+        Tuple of (a, e) where:
+        a: Semi-major axis for elliptic/hyperbolic orbits, or parabola parameter for parabolic orbits
+        e: Eccentricity
+    """
+    # Specific orbital energy
+    energy = v**2 / 2 - mass_red / r
+    h = r * v  # Specific angular momentum
+
+    if np.isclose(energy, 0, atol=1e-8):  # Parabolic orbit
+        # For parabolic orbits, we calculate the parameter p
+        p = h**2 / mass_red
+        return p / 2, 1.0  # Return p/2 as 'a' and e=1
+    else:
+        # For elliptic and hyperbolic orbits
+        a = -mass_red / (2 * energy)
+        e = np.sqrt(1 + 2 * energy * h**2 / mass_red**2)
+        return a, e
+
+
 def kepler_equation_elliptic(E: float_type, M: float_type, e: float_type) -> float_type:
     """Kepler's Equation for elliptical orbits."""
     return E - e * np.sin(E) - M
@@ -184,13 +215,10 @@ def generate_trajectories(
             0,
         ]
     )
-    h_0 = np.cross(r_0, v_0)  # Specific angular momentum
     r, v = np.linalg.norm(r_0), np.linalg.norm(v_0)
-    e_vec = np.cross(v_0, h_0) / mass_red - r_0 / r
-    e = np.linalg.norm(e_vec)
 
-    # Semi-major axis
-    a = 1 / (2 / r - v**2 / mass_red)
+    # Calculate orbital parameters
+    a, e = calculate_orbital_parameters(r, v, mass_red)
 
     # Generate equally spaced times
     t = np.arange(num_points) * dt
