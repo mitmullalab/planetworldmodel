@@ -51,6 +51,7 @@ ignore_missing_imports = true
 
 [tool.pylint.messages_control]
 disable = [
+  "invalid-name",
   "missing-docstring",
   "too-many-arguments",
   "too-many-lines",
