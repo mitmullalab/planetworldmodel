@@ -1,3 +1,4 @@
+import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from pydantic import BaseModel, Field
@@ -31,52 +32,46 @@ def random_two_body_problem(
 
     Args:
         target_eccentricity: The desired eccentricity of the orbit.
-        key: Random number generator key.
+        key: Random number generator key (unused in this implementation).
         g_constant: Gravitational constant.
 
     Returns:
         A TwoBodyProblem instance with the specified eccentricity.
     """
     if isinstance(key, int):
-        key = jr.Key(key)
-    keys = jr.split(key, 4)
+        key = jr.key(key)
+    keys = jr.split(key, 5)
 
     # Generate random masses (1e24 to 1e30 kg, log-uniform)
     mass_1 = 10 ** jr.uniform(keys[0], minval=24, maxval=30)
     mass_2 = 10 ** jr.uniform(keys[1], minval=24, maxval=30)
-
-    # Total mass and reduced mass
     mass_tot = mass_1 + mass_2
-    mass_red = mass_1 * mass_2 / mass_tot
     mu = g_constant * mass_tot
 
     # Generate random initial position (1e9 to 1e12 m, log-uniform)
     r_0_magnitude = 10 ** jr.uniform(keys[2], minval=9, maxval=12)
-    r_0_angle = jr.uniform(keys[3], minval=0, maxval=2 * np.pi)
+    r_0_angle = jr.uniform(keys[3], minval=0, maxval=2 * jnp.pi)
 
-    # Calculate velocity and energy based on orbit type
+    # Calculate semi-major axis and velocity magnitude
     if target_eccentricity < 1:  # Elliptical orbit
         a = r_0_magnitude / (1 - target_eccentricity)
         v_0_magnitude = np.sqrt(mu * (2 / r_0_magnitude - 1 / a))
-        E = -mu / (2 * a)
     elif target_eccentricity == 1:  # Parabolic orbit
         v_0_magnitude = np.sqrt(2 * mu / r_0_magnitude)
-        E = 0
     else:  # Hyperbolic orbit
         a = r_0_magnitude / (target_eccentricity - 1)
         v_0_magnitude = np.sqrt(mu * (2 / r_0_magnitude + 1 / abs(a)))
-        E = mu / (2 * abs(a))
 
     # Calculate the angle of the velocity vector
-    if target_eccentricity == 1:
-        # For parabolic orbit, we can choose any angle between 0 and pi/2
-        v_0_angle = np.random.uniform(0, np.pi / 2)
-    else:
-        L_squared = (target_eccentricity**2 - 1) * mu**2 * mass_red**2 / (2 * E)
-        sin_theta = np.sqrt(abs(L_squared)) / (r_0_magnitude * v_0_magnitude * mass_red)
-        v_0_angle = np.arcsin(
-            min(sin_theta, 1)
-        )  # Ensure we don't exceed 1 due to numerical issues
+    # We want the velocity to be perpendicular to the eccentricity vector
+    # e = ((v^2 - μ/r)r - (r·v)v) / μ
+    # For simplicity, let's choose v perpendicular to r
+    v_0_angle = r_0_angle + np.pi / 2
+
+    # Adjust v_0_magnitude to achieve the desired eccentricity
+    v_squared = mu * (1 + target_eccentricity) / r_0_magnitude
+    v_0_magnitude = np.sqrt(v_squared)
+
     return TwoBodyProblem(
         mass_1=mass_1,
         mass_2=mass_2,
@@ -84,7 +79,27 @@ def random_two_body_problem(
         r_0_angle=r_0_angle,
         v_0_magnitude=v_0_magnitude,
         v_0_angle=v_0_angle,
+        gravitational_constant=g_constant,
     )
+
+
+def compute_parabolic_position(u: float, h: np.ndarray, mu: float) -> np.ndarray:
+    """Compute the position vector for a parabolic orbit.
+    Assumes the entire orbit is in the x-y plane.
+
+    Args:
+        u: Anomaly angle
+        h: Specific angular momentum
+        mu: Gravitational parameter
+
+    Returns:
+        Position vector in the orbital plane.
+    """
+    p = np.linalg.norm(h) ** 2 / mu  # parameter of the parabola
+    r = p / 2 * (1 + np.cos(u))
+    x = r * np.cos(u)
+    y = r * np.sin(u)
+    return np.array([x, y, 0])
 
 
 def compute_position(nu: float, a: float, e: float) -> np.ndarray:
@@ -110,7 +125,8 @@ def compute_position(nu: float, a: float, e: float) -> np.ndarray:
 
 
 def generate_trajectories(
-    problem: TwoBodyProblem, num_points: int = 100
+    problem: TwoBodyProblem,
+    num_points: int = 100,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
@@ -157,12 +173,18 @@ def generate_trajectories(
     print(f"a: {a}")
 
     # Calculate orbit
-    if e < 1:  # Elliptical orbit
-        nu_vals = np.linspace(0, 2 * np.pi, num_points)
-    else:  # Hyperbolic orbit
-        nu_max = np.arccos(-1 / e)
-        nu_vals = np.linspace(-nu_max, nu_max, num_points)
-    orbit_rel = np.array([compute_position(nu, a, e) for nu in nu_vals])
+    if e == 1:  # Paraoblic orbit
+        u_vals = np.linspace(-np.pi, np.pi, num_points)
+        orbit_rel = np.array(
+            [compute_parabolic_position(u, h_0, mass_red) for u in u_vals]
+        )
+    else:
+        if e < 1:  # Elliptical orbit
+            nu_vals = np.linspace(0, 2 * np.pi, num_points)
+        else:  # Hyperbolic orbit
+            nu_max = np.arccos(-1 / e)
+            nu_vals = np.linspace(-nu_max, nu_max, num_points)
+        orbit_rel = np.array([compute_position(nu, a, e) for nu in nu_vals])
 
     # Calculate the two objects' orbits
     orbit_1 = -orbit_rel * (problem.mass_2 / mass_tot)
