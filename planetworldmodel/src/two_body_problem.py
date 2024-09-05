@@ -1,80 +1,92 @@
-import chex
-import jax.numpy as jnp
-import jax.random as jr
 import numpy as np
+from pydantic import BaseModel, Field
 
-@chex.dataclass
-class TwoBodyProblem:
-    mass_1: float
-    mass_2: float
-    r_0_magnitude: float  # Magnitude of the initial relative position vector
-    r_0_angle: float  # Angle in the x-y plane of the initial relative position vector
-    v_0_magnitude: float  # Magnitude of the initial relative velocity vector
-    v_0_angle: float  # Angle in the x-y plane of the initial relative velocity vector
-    gravitational_constant: float = 6.67430e-11    
-    
+float_type = float | np.floating
+
+
+class TwoBodyProblem(BaseModel):
+    mass_1: float_type
+    mass_2: float_type
+    r_0_magnitude: float_type = Field(
+        ..., description="Magnitude of the initial relative position vector"
+    )
+    r_0_angle: float_type = Field(
+        ...,
+        description="Angle in the x-y plane of the initial relative position vector",
+    )
+    v_0_magnitude: float_type = Field(
+        ..., description="Magnitude of the initial relative velocity vector"
+    )
+    v_0_angle: float_type = Field(
+        ...,
+        description="Angle in the x-y plane of the initial relative velocity vector",
+    )
+    gravitational_constant: float_type = 6.67430e-11
+
 
 def random_two_body_problem(
-    target_eccentricity: float, key: jr.key, g_constant: float = 6.67430e-11
+    target_eccentricity: float_type, seed: int = 0, g_constant: float_type = 6.67430e-11
 ) -> TwoBodyProblem:
     """
     Generate a random TwoBodyProblem instance with a specified target eccentricity.
 
     Args:
         target_eccentricity: The desired eccentricity of the orbit.
-        key: Random number generator key.
+        seed: Random number generator seed.
         g_constant: Gravitational constant.
 
     Returns:
         A TwoBodyProblem instance with the specified eccentricity.
     """
-    keys = jr.split(key, 5)
-    
+    rng = np.random.default_rng(seed)
+
     # Generate random masses (1e24 to 1e30 kg, log-uniform)
-    mass_1 = 10 ** jr.uniform(keys[0], minval=24, maxval=30)
-    mass_2 = 10 ** jr.uniform(keys[1], minval=24, maxval=30)
+    mass_1 = 10 ** rng.uniform(24, 30)
+    mass_2 = 10 ** rng.uniform(24, 30)
     mass_tot = mass_1 + mass_2
     mu = g_constant * mass_tot
 
     # Generate random initial position (1e9 to 1e12 m, log-uniform)
-    r_0_magnitude = 10 ** jr.uniform(keys[2], minval=9, maxval=12)
-    r_0_angle = jr.uniform(keys[3], minval=0, maxval=2 * jnp.pi)
+    r_0_magnitude = 10 ** rng.uniform(9, 12)
+    r_0_angle = rng.uniform(0, 2 * np.pi)
 
     # Calculate semi-major axis and velocity magnitude
     if target_eccentricity < 1:  # Elliptical orbit
         a = r_0_magnitude / (1 - target_eccentricity)
-        v_0_magnitude = jnp.sqrt(mu * (2 / r_0_magnitude - 1 / a))
+        v_0_magnitude = np.sqrt(mu * (2 / r_0_magnitude - 1 / a))
     elif target_eccentricity == 1:  # Parabolic orbit
-        v_0_magnitude = jnp.sqrt(2 * mu / r_0_magnitude)
+        v_0_magnitude = np.sqrt(2 * mu / r_0_magnitude)
     else:  # Hyperbolic orbit
         a = r_0_magnitude / (target_eccentricity - 1)
-        v_0_magnitude = jnp.sqrt(mu * (2 / r_0_magnitude + 1 / abs(a)))
+        v_0_magnitude = np.sqrt(mu * (2 / r_0_magnitude + 1 / np.abs(a)))
 
     # Calculate the angle of the velocity vector
     # We want the velocity to be perpendicular to the eccentricity vector
     # e = ((v^2 - μ/r)r - (r·v)v) / μ
     # For simplicity, let's choose v perpendicular to r
-    v_0_angle = r_0_angle + jnp.pi/2
+    v_0_angle = r_0_angle + np.pi / 2
 
     # Adjust v_0_magnitude to achieve the desired eccentricity
     v_squared = mu * (1 + target_eccentricity) / r_0_magnitude
-    v_0_magnitude = jnp.sqrt(v_squared)
+    v_0_magnitude = np.sqrt(v_squared)
 
     return TwoBodyProblem(
-        mass_1=mass_1,  
+        mass_1=mass_1,
         mass_2=mass_2,
         r_0_magnitude=r_0_magnitude,
         r_0_angle=r_0_angle,
         v_0_magnitude=v_0_magnitude,
         v_0_angle=v_0_angle,
-        gravitational_constant=g_constant
+        gravitational_constant=g_constant,
     )
 
 
-def compute_parabolic_position(u: float, h: np.ndarray, mu: float) -> np.ndarray:
+def compute_parabolic_position(
+    u: float_type, h: np.ndarray, mu: float_type
+) -> np.ndarray:
     """Compute the position vector for a parabolic orbit.
     Assumes the entire orbit is in the x-y plane.
-    
+
     Args:
         u: Anomaly angle
         h: Specific angular momentum
@@ -83,14 +95,14 @@ def compute_parabolic_position(u: float, h: np.ndarray, mu: float) -> np.ndarray
     Returns:
         Position vector in the orbital plane.
     """
-    p = np.linalg.norm(h)**2 / mu  # parameter of the parabola
+    p = np.linalg.norm(h) ** 2 / mu  # parameter of the parabola
     r = p / 2 * (1 + np.cos(u))
     x = r * np.cos(u)
     y = r * np.sin(u)
     return np.array([x, y, 0])
 
 
-def compute_position(nu: float, a: float, e: float) -> np.ndarray:
+def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray:
     """Compute the position vector in the orbital plane.
     Assumes the entire orbit is in the x-y plane.
 
@@ -113,8 +125,9 @@ def compute_position(nu: float, a: float, e: float) -> np.ndarray:
 
 
 def generate_trajectories(
-    problem: TwoBodyProblem, num_points: int = 100,
-) -> tuple[np.ndarray, np.ndarray, float]:
+    problem: TwoBodyProblem,
+    num_points: int = 100,
+) -> tuple[np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
 
@@ -160,9 +173,11 @@ def generate_trajectories(
     print(f"a: {a}")
 
     # Calculate orbit
-    if e == 1: # Paraoblic orbit
+    if e == 1:  # Paraoblic orbit
         u_vals = np.linspace(-np.pi, np.pi, num_points)
-        orbit_rel = np.array([compute_parabolic_position(u, h_0, mass_red) for u in u_vals])
+        orbit_rel = np.array(
+            [compute_parabolic_position(u, h_0, mass_red) for u in u_vals]
+        )
     else:
         if e < 1:  # Elliptical orbit
             nu_vals = np.linspace(0, 2 * np.pi, num_points)
