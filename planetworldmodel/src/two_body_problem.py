@@ -5,6 +5,10 @@ float_type = float | np.floating
 
 
 class TwoBodyProblem(BaseModel):
+    model_config: dict = {
+        "arbitrary_types_allowed": True,
+    }
+
     mass_1: float_type
     mass_2: float_type
     r_0_magnitude: float_type = Field(
