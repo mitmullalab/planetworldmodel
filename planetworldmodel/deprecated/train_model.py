@@ -1,5 +1,4 @@
 import argparse
-import os
 from pathlib import Path
 import pickle
 
@@ -11,6 +10,7 @@ from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.loggers import WandbLogger
+import wandb
 
 # Set parser
 parser = argparse.ArgumentParser()
@@ -165,10 +165,7 @@ class DataModule(LightningDataModule):
         self.model_dir = model_dir
         self.batch_size = batch_size
         self.num_shards = len(find_usable_cuda_devices())
-        data_dir = os.path.join(
-            os.path.expanduser("~"),
-            f"emergence/data/gridworld/{NUM_STATES}-states-99-length-10000-examples",
-        )
+        data_dir = Path.cwd() / "data"
         self.data_dir = data_dir
 
     # def collate_fn(self, batch):
@@ -269,12 +266,23 @@ def main():
     max_epochs = 500
     use_wandb = True
     if use_wandb:
-        wandb_logger = WandbLogger(
-            log_model=None, project="emergence", entity="keyonvafa", name=model_name
-        )
-    model_dir = os.path.join(
-        os.path.expanduser("~"), "emergence/checkpoints", model_name
-    )
+        # Check if the project exists and initialize it
+        try:
+            wandb.init(
+                project="emergence",
+                entity="petergchang",
+                name=model_name,
+                resume="allow",
+            )
+        except wandb.errors.UsageError:
+            print(
+                "Project 'emergence' or entity 'petergchang' not found. Creating new project."
+            )
+            wandb.init(project="emergence", entity="peterchang", name=model_name)
+
+        wandb_logger = WandbLogger(experiment=wandb.run)
+
+    model_dir = Path.cwd() / "model" / model_name
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=model_dir,
