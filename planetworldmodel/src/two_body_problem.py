@@ -181,7 +181,7 @@ def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray
 
 def generate_trajectories(
     problem: TwoBodyProblem,
-    num_points: int = 100,
+    num_points: int = 1_000,
     dt: float_type = 60 * 60,  # 1 hour
 ) -> tuple[np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
