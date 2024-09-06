@@ -143,8 +143,8 @@ def solve_kepler_equation(M: float_type, e: float_type) -> float_type:
         return M
     elif e < 1:  # Elliptic
         return newton(lambda E: kepler_equation_elliptic(E, M, e), M)
-    else:  # Hyperbolic
-        return newton(lambda H: kepler_equation_hyperbolic(H, M, e), np.asinh(M / e))
+    # Hyperbolic
+    return newton(lambda H: kepler_equation_hyperbolic(H, M, e), np.asinh(M / e))
 
 
 def true_anomaly_from_anomaly(anomaly: float_type, e: float_type) -> float_type:
@@ -153,8 +153,8 @@ def true_anomaly_from_anomaly(anomaly: float_type, e: float_type) -> float_type:
         return anomaly  # For parabolic orbits, we directly use the "anomaly" as true anomaly
     elif e < 1:  # Elliptic
         return 2 * np.arctan(np.sqrt((1 + e) / (1 - e)) * np.tan(anomaly / 2))
-    else:  # Hyperbolic
-        return 2 * np.arctan(np.sqrt((e + 1) / (e - 1)) * np.tanh(anomaly / 2))
+    # Hyperbolic
+    return 2 * np.arctan(np.sqrt((e + 1) / (e - 1)) * np.tanh(anomaly / 2))
 
 
 def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray:
