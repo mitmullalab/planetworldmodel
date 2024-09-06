@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 import pickle
 
 import numpy as np
@@ -191,13 +192,13 @@ class DataModule(LightningDataModule):
     #   }
 
     def prepare_data(self, stage=None):
-        if os.path.exists(f"{self.data_dir}/tokenizer.pt"):
+        if Path(f"{self.data_dir}/tokenizer.pt").exists():
             print("Loading existing tokenizer...")
             self.tokenizer = torch.load(f"{self.data_dir}/tokenizer.pt")
             print("...done!")
         else:
             print("Loading datasets...")
-            os.makedirs(self.data_dir, exist_ok=True)
+            Path(self.data_dir).mkdir(parents=True, exist_ok=True)
             with open(f"{self.data_dir}/train.txt", "r") as f:
                 train_sequences = f.read().splitlines()
             with open(f"{self.data_dir}/valid.txt", "r") as f:
@@ -285,7 +286,7 @@ def main():
     )
 
     last_checkpoint = f"{model_dir}/last.ckpt"
-    resume_checkpoint = last_checkpoint if os.path.exists(last_checkpoint) else None
+    resume_checkpoint = last_checkpoint if Path(last_checkpoint).exists() else None
 
     trainer = Trainer(
         max_epochs=max_epochs,
