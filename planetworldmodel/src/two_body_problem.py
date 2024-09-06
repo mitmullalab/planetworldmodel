@@ -98,7 +98,7 @@ def calculate_orbital_parameters(
     r: float_type, v: float_type, mass_red: float_type
 ) -> tuple[float_type, float_type]:
     """
-    Calculate orbital parameters (semi-major axis or parabola parameter, and eccentricity).
+    Calculate orbital parameters (semi-major axis/parabola parameter and eccentricity).
 
     Args:
         r: Magnitude of the position vector
@@ -107,7 +107,8 @@ def calculate_orbital_parameters(
 
     Returns:
         Tuple of (a, e) where:
-        a: Semi-major axis for elliptic/hyperbolic orbits, or parabola parameter for parabolic orbits
+        a: Semi-major axis for elliptic/hyperbolic orbits
+            (or parabola parameter for parabolic orbits)
         e: Eccentricity
     """
     # Specific orbital energy
@@ -118,11 +119,10 @@ def calculate_orbital_parameters(
         # For parabolic orbits, we calculate the parameter p
         p = h**2 / mass_red
         return p / 2, 1.0  # Return p/2 as 'a' and e=1
-    else:
-        # For elliptic and hyperbolic orbits
-        a = -mass_red / (2 * energy)
-        e = np.sqrt(1 + 2 * energy * h**2 / mass_red**2)
-        return a, e
+    # For elliptic and hyperbolic orbits
+    a = -mass_red / (2 * energy)
+    e = np.sqrt(1 + 2 * energy * h**2 / mass_red**2)
+    return a, e
 
 
 def kepler_equation_elliptic(E: float_type, M: float_type, e: float_type) -> float_type:
@@ -139,9 +139,9 @@ def kepler_equation_hyperbolic(
 
 def solve_kepler_equation(M: float_type, e: float_type) -> float_type:
     """Solve Kepler's Equation for elliptic and hyperbolic orbits."""
-    if is_nearly_parabolic(e):
+    if is_nearly_parabolic(e):  # Parabolic
         return M
-    elif e < 1:  # Elliptic
+    if e < 1:  # Elliptic
         return newton(lambda E: kepler_equation_elliptic(E, M, e), M)
     # Hyperbolic
     return newton(lambda H: kepler_equation_hyperbolic(H, M, e), np.asinh(M / e))
@@ -149,9 +149,9 @@ def solve_kepler_equation(M: float_type, e: float_type) -> float_type:
 
 def true_anomaly_from_anomaly(anomaly: float_type, e: float_type) -> float_type:
     """Convert eccentric/hyperbolic anomaly to true anomaly."""
-    if is_nearly_parabolic(e):
+    if is_nearly_parabolic(e):  # Parabolic
         return anomaly  # For parabolic orbits, we directly use the "anomaly" as true anomaly
-    elif e < 1:  # Elliptic
+    if e < 1:  # Elliptic
         return 2 * np.arctan(np.sqrt((1 + e) / (1 - e)) * np.tan(anomaly / 2))
     # Hyperbolic
     return 2 * np.arctan(np.sqrt((e + 1) / (e - 1)) * np.tanh(anomaly / 2))
