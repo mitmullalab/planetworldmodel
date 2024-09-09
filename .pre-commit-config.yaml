@@ -65,3 +65,4 @@ repos:
       - id: mypy
         additional_dependencies:
           - chex
+          - types-PyYAML
