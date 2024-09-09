@@ -11,6 +11,7 @@ uv pip install -e '.[dev]'
 ```
 
 ### On an Ubuntu machine:
+
 ```
 sudo apt install pipx
 pipx install uv
