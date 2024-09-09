@@ -17,6 +17,8 @@ from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+from planetworldmodel.setting import CKPT_DIR, CONFIG_DIR, DATA_DIR
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -99,7 +101,7 @@ class DataModule(LightningDataModule):
             return
 
         logger.info("Loading datasets...")
-        Path(self.data_dir).mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         with open(f"{self.data_dir}/train.txt", "r") as f:
             train_sequences = f.read().splitlines()
         with open(f"{self.data_dir}/val.txt", "r") as f:
@@ -227,7 +229,7 @@ def load_config() -> TransformerConfig:
 
     # Load the config yaml file
     try:
-        with (Path.cwd() / "configs" / f"{args.config_file}.yaml").open("r") as file:
+        with (CONFIG_DIR / f"{args.config_file}.yaml").open("r") as file:
             config = yaml.load(file, Loader=yaml.FullLoader)
     except FileNotFoundError:
         logger.error("Config file not found. Please provide a valid yaml file.")
@@ -283,7 +285,7 @@ def main(config: TransformerConfig):
     wandb_logger = setup_wandb(config)
 
     # Set up checkpoint
-    ckpt_dir = Path.cwd() / "checkpoints" / config.name
+    ckpt_dir = CKPT_DIR / config.name
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch}-{step}",
@@ -292,14 +294,13 @@ def main(config: TransformerConfig):
         save_top_k=1,
         save_last=True,
     )
-    last_checkpoint = Path(ckpt_dir) / "last.ckpt"
+    last_checkpoint = ckpt_dir / "last.ckpt"
     resume_checkpoint = last_checkpoint if last_checkpoint.exists() else None
 
     # Instantiate the data module and the model
     batch_size = config.batch_size_per_device * num_devices
-    data_dir = Path.cwd() / "data"
     data_module = DataModule(
-        data_dir=data_dir, batch_size=batch_size, num_devices=num_devices
+        data_dir=DATA_DIR, batch_size=batch_size, num_devices=num_devices
     )
     data_module.prepare_data()
     model = GPT2Model(
