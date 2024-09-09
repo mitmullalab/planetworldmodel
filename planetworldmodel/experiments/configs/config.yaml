@@ -1,0 +1,10 @@
+name: dummy
+num_layers: 8
+num_heads: 8
+dim_embedding: 512
+batch_size_per_device: 32
+learning_rate: 0.0001
+max_epochs: 500
+use_wandb: True
+wandb_project: planetworldmodel
+wandb_entity: petergchang
