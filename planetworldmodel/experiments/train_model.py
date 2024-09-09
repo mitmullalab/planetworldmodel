@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class TransformerConfig(BaseModel):
-    model_name: str
+    name: str
     num_layers: int
     num_heads: int
     dim_embedding: int
@@ -222,12 +222,12 @@ def load_config() -> TransformerConfig:
         The config object.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("config_file", type=str, help="Path to the yaml config file")
+    parser.add_argument("--config_file", type=str, help="Path to the yaml config file")
     args = parser.parse_args()
 
     # Load the config yaml file
     try:
-        with open(Path.cwd() / "configs" / args.config_file, "r") as file:
+        with (Path.cwd() / "configs" / f"{args.config_file}.yaml").open("r") as file:
             config = yaml.load(file, Loader=yaml.FullLoader)
     except FileNotFoundError:
         logger.error("Config file not found. Please provide a valid yaml file.")
@@ -250,7 +250,7 @@ def setup_wandb(config: TransformerConfig) -> WandbLogger | None:
         wandb.init(
             project=config.wandb_project,
             entity=config.wandb_entity,
-            name=config.model_name,
+            name=config.name,
             resume="allow",
         )
         return WandbLogger(experiment=wandb.run)
@@ -283,7 +283,7 @@ def main(config: TransformerConfig):
     wandb_logger = setup_wandb(config)
 
     # Set up checkpoint
-    ckpt_dir = Path.cwd() / "checkpoints" / config.model_name
+    ckpt_dir = Path.cwd() / "checkpoints" / config.name
     checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="{epoch}-{step}",
@@ -303,7 +303,7 @@ def main(config: TransformerConfig):
     )
     data_module.prepare_data()
     model = GPT2Model(
-        config.model_name,
+        config.name,
         config.num_layers,
         config.num_heads,
         config.dim_embedding,
