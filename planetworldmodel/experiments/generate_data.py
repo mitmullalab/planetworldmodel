@@ -15,7 +15,7 @@ def main(args):
     traj_min, traj_max = np.inf, -np.inf
     train, val = [], []
     for e in args.eccentricities:
-        for i in range(args.num_trajectories_per_eccentricity):
+        for _ in range(args.num_trajectories_per_eccentricity):
             for dataset in (train, val):
                 problem = random_two_body_problem(target_eccentricity=e, seed=count)
                 traj_1, traj_2, _ = generate_trajectories(
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dt",
         type=float,
-        default=60 * 60,  # 1 hour
+        default=10,  # 10 seconds
         help="Time step in seconds between each point.",
     )
 
