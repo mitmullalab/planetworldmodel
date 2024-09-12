@@ -37,32 +37,6 @@ class TransformerConfig(BaseModel):
     )
 
 
-class Tokenizer:
-    def __init__(self, pad_token_id: int = 0, num_states: int = 10):
-        self.pad_token_id = pad_token_id
-        word_to_id = {"L": 1, "O": 2, "R": 3, "<pad>": self.pad_token_id}
-        for state, next_id in zip(range(num_states), range(4, num_states + 4)):
-            word_to_id[str(state)] = next_id
-        self.word_to_id = word_to_id
-        self.id_to_word = {v: k for k, v in self.word_to_id.items()}
-        self.vocab_size = len(self.word_to_id)
-
-    def encode(self, sentence: str) -> list[int]:
-        return [
-            self.word_to_id.get(word, self.word_to_id["<pad>"])
-            for word in sentence.split()
-        ]
-
-    def decode(self, token_ids: torch.Tensor | np.ndarray) -> str:
-        if isinstance(token_ids, torch.Tensor):
-            token_ids = token_ids.cpu().numpy()
-        if token_ids.ndim == 0:
-            token_ids = np.array([token_ids])
-        return " ".join(
-            self.id_to_word[id] for id in token_ids if id != self.pad_token_id
-        )
-
-
 class SequenceDataset(Dataset):
     def __init__(self, file_path: Path):
         self.data = np.load(file_path)
@@ -201,25 +175,6 @@ def setup_wandb(config: TransformerConfig) -> WandbLogger | None:
         )
         return WandbLogger(experiment=wandb.run)
     return None
-
-
-def collate_fn(batch, pad_token_id=0):
-    max_length = max(len(data["input_ids"]) for data in batch)
-    padded_inputs = []
-    attention_masks = []
-    labels = []
-    for data in batch:
-        padding_length = max_length - len(data["input_ids"])
-        padded_input = data["input_ids"] + [pad_token_id] * padding_length
-        attention_mask = data["attention_mask"] + [0] * padding_length
-        padded_inputs.append(padded_input)
-        attention_masks.append(attention_mask)
-        labels.append(padded_input)
-    return {
-        "input_ids": torch.tensor(padded_inputs),
-        "attention_mask": torch.tensor(attention_masks),
-        "labels": torch.tensor(labels),
-    }
 
 
 def main(config: TransformerConfig):
