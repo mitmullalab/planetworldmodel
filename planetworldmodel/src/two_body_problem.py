@@ -53,9 +53,9 @@ def random_two_body_problem(
     """
     rng = np.random.default_rng(seed)
 
-    # Generate random masses (1e2 to 1e4 kg, log-uniform)
-    mass_1 = 10 ** rng.uniform(2, 4)
-    mass_2 = 10 ** rng.uniform(2, 4)
+    # Generate random masses (1e2 to 1e5 kg, log-uniform)
+    mass_1 = 10 ** rng.uniform(2, 5)
+    mass_2 = 10 ** rng.uniform(2, 5)
     mass_tot = mass_1 + mass_2
     mu = g_constant * mass_tot
 
