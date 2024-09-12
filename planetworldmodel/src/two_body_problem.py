@@ -53,9 +53,9 @@ def random_two_body_problem(
     """
     rng = np.random.default_rng(seed)
 
-    # Generate random masses (1e3 to 1e6 kg, log-uniform)
-    mass_1 = 10 ** rng.uniform(3, 6)
-    mass_2 = 10 ** rng.uniform(3, 6)
+    # Generate random masses (1e2 to 1e4 kg, log-uniform)
+    mass_1 = 10 ** rng.uniform(2, 4)
+    mass_2 = 10 ** rng.uniform(2, 4)
     mass_tot = mass_1 + mass_2
     mu = g_constant * mass_tot
 
@@ -182,7 +182,7 @@ def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray
 def generate_trajectories(
     problem: TwoBodyProblem,
     num_points: int = 1_000,
-    dt: float_type = 60,  # 1 minute
+    dt: float_type = 10,  # 10 second
 ) -> tuple[np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
