@@ -65,6 +65,35 @@ class SequenceDataModule(LightningDataModule):
         )
 
 
+class PositionalEncoding(nn.Module):
+    """Implements the positional encoding as described in the original Transformer paper."""
+
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+
+        pe = torch.zeros(max_len, d_model)  # (max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(
+            1
+        )  # (max_len, 1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)  # Even indices
+        pe[:, 1::2] = torch.cos(position * div_term)  # Odd indices
+        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
+        self.register_buffer("pe", pe)
+
+    def forward(self, x):
+        """
+        Args:
+            x: Tensor of shape (batch_size, seq_len, d_model)
+        Returns:
+            Tensor of shape (batch_size, seq_len, d_model)
+        """
+        x = x + self.pe[:, : x.size(1), :]
+        return x
+
+
 class TransformerRegressor(LightningModule):
     def __init__(
         self,
@@ -81,17 +110,27 @@ class TransformerRegressor(LightningModule):
         self.learning_rate = learning_rate
 
         self.embedding = nn.Linear(feature_dim, dim_embedding)
-        self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=dim_embedding, nhead=num_heads),
+        self.positional_encoding = PositionalEncoding(dim_embedding)
+
+        self.transformer_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=dim_embedding, nhead=num_heads),
             num_layers=num_layers,
         )
         self.regressor = nn.Linear(dim_embedding, feature_dim)
 
     def forward(self, x):
-        x = self.embedding(x)
+        x = self.embedding(x)  # (batch_size, seq_len, dim_embedding)
+        x = self.positional_encoding(x)
         x = x.permute(1, 0, 2)  # (seq_len, batch_size, dim_embedding) # noqa: FURB184
-        x = self.transformer(x)
-        x = x.permute(1, 0, 2)  # (batch_size, seq_len, dim_embedding) # noqa: FURB184
+
+        # Generate target mask
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(x.size(0)).to(
+            x.device
+        )
+
+        # memory is None because we are not using encoder
+        x = self.transformer_decoder(x, memory=None, tgt_mask=tgt_mask)
+        x = x.permute(1, 0, 2)  # (batch_size, seq_len, dim_embedding)  # noqa: FURB184
         return self.regressor(x)
 
     def training_step(self, batch, batch_idx):
