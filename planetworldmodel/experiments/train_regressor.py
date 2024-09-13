@@ -1,40 +1,20 @@
 import argparse
 import logging
 from pathlib import Path
-import sys
-import yaml
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from pydantic import BaseModel, Field
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
 
-from planetworldmodel.setting import CKPT_DIR, CONFIG_DIR, DATA_DIR
+from planetworldmodel import TransformerConfig, load_config, setup_wandb
+from planetworldmodel.setting import CKPT_DIR, DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-class TransformerConfig(BaseModel):
-    name: str
-    num_layers: int
-    num_heads: int
-    dim_embedding: int
-    batch_size_per_device: int
-    learning_rate: float
-    max_epochs: int
-    use_wandb: bool
-    wandb_project: str = Field(
-        "", description="Wandb project name. If use_wandb is False, this is ignored."
-    )
-    wandb_entity: str = Field(
-        "", description="Wandb entity name. If use_wandb is False, this is ignored."
-    )
 
 
 class SequenceDataset(Dataset):
@@ -135,48 +115,6 @@ class TransformerRegressor(LightningModule):
         return optimizer
 
 
-def load_config() -> TransformerConfig:
-    """Load the config file and return a TransformerConfig object.
-
-    Returns:
-        The config object.
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config_file", type=str, help="Path to the yaml config file")
-    args = parser.parse_args()
-
-    # Load the config yaml file
-    try:
-        with (CONFIG_DIR / f"{args.config_file}.yaml").open("r") as file:
-            config = yaml.load(file, Loader=yaml.FullLoader)
-    except FileNotFoundError:
-        logger.error("Config file not found. Please provide a valid yaml file.")
-        sys.exit(1)
-    return TransformerConfig(**config)
-
-
-def setup_wandb(config: TransformerConfig) -> WandbLogger | None:
-    """Setup wandb if use_wandb is True. Else return None.
-
-    Args:
-        config: The config object.
-
-    Returns:
-        The wandb logger object or None.
-    """
-    if config.use_wandb:
-        import wandb
-
-        wandb.init(
-            project=config.wandb_project,
-            entity=config.wandb_entity,
-            name=config.name,
-            resume="allow",
-        )
-        return WandbLogger(experiment=wandb.run)
-    return None
-
-
 def main(config: TransformerConfig):
     torch.set_float32_matmul_precision("medium")
     devices = find_usable_cuda_devices()
@@ -229,5 +167,8 @@ def main(config: TransformerConfig):
 
 
 if __name__ == "__main__":
-    config = load_config()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_file", type=str, help="Path to the yaml config file")
+    args = parser.parse_args()
+    config = load_config(args.config_file, logger)
     main(config)
