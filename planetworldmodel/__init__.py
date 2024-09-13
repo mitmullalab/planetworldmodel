@@ -3,7 +3,7 @@ from .src.two_body_problem import (
     generate_trajectories,
     random_two_body_problem,
 )
-from .src.utils import TransformerConfig, load_config
+from .src.utils import TransformerConfig, load_config, setup_wandb
 from .experiments.train_regressor import TransformerRegressor
 
 __all__ = [
@@ -13,4 +13,5 @@ __all__ = [
     "load_config",
     "generate_trajectories",
     "random_two_body_problem",
+    "setup_wandb",
 ]
