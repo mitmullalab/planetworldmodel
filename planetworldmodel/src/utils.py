@@ -4,6 +4,7 @@ import yaml
 
 from pydantic import BaseModel, Field
 from pytorch_lightning.loggers import WandbLogger
+import wandb
 
 from planetworldmodel.setting import CONFIG_DIR
 
@@ -55,8 +56,6 @@ def setup_wandb(config: TransformerConfig) -> WandbLogger | None:
         The wandb logger object or None.
     """
     if config.use_wandb:
-        import wandb
-
         wandb.init(
             project=config.wandb_project,
             entity=config.wandb_entity,
