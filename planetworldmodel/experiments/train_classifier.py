@@ -11,33 +11,16 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import GPT2Config, GPT2LMHeadModel
 from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
-from pydantic import BaseModel, Field
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+from planetworldmodel import TransformerConfig
 from planetworldmodel.setting import CKPT_DIR, CONFIG_DIR, DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-class TransformerConfig(BaseModel):
-    name: str
-    num_layers: int
-    num_heads: int
-    dim_embedding: int
-    batch_size_per_device: int
-    learning_rate: float
-    max_epochs: int
-    use_wandb: bool
-    wandb_project: str = Field(
-        "", description="Wandb project name. If use_wandb is False, this is ignored."
-    )
-    wandb_entity: str = Field(
-        "", description="Wandb entity name. If use_wandb is False, this is ignored."
-    )
 
 
 class Tokenizer:
