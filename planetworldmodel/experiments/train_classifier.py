@@ -12,9 +12,8 @@ from transformers.modeling_outputs import CausalLMOutputWithCrossAttentions
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger
 
-from planetworldmodel import TransformerConfig, load_config
+from planetworldmodel import TransformerConfig, load_config, setup_wandb
 from planetworldmodel.setting import CKPT_DIR, DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
@@ -196,28 +195,6 @@ class GPT2Model(LightningModule):
     def configure_optimizers(self) -> torch.optim.Optimizer:
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         return optimizer
-
-
-def setup_wandb(config: TransformerConfig) -> WandbLogger | None:
-    """Setup wandb if use_wandb is True. Else return None.
-
-    Args:
-        config: The config object.
-
-    Returns:
-        The wandb logger object or None.
-    """
-    if config.use_wandb:
-        import wandb
-
-        wandb.init(
-            project=config.wandb_project,
-            entity=config.wandb_entity,
-            name=config.name,
-            resume="allow",
-        )
-        return WandbLogger(experiment=wandb.run)
-    return None
 
 
 def collate_fn(batch, pad_token_id=0):
