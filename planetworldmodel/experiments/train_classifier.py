@@ -3,8 +3,6 @@ from functools import partial
 import logging
 from pathlib import Path
 import pickle
-import sys
-import yaml
 
 import numpy as np
 import torch
@@ -16,8 +14,8 @@ from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from planetworldmodel import TransformerConfig
-from planetworldmodel.setting import CKPT_DIR, CONFIG_DIR, DATA_DIR
+from planetworldmodel import TransformerConfig, load_config
+from planetworldmodel.setting import CKPT_DIR, DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -200,26 +198,6 @@ class GPT2Model(LightningModule):
         return optimizer
 
 
-def load_config() -> TransformerConfig:
-    """Load the config file and return a TransformerConfig object.
-
-    Returns:
-        The config object.
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config_file", type=str, help="Path to the yaml config file")
-    args = parser.parse_args()
-
-    # Load the config yaml file
-    try:
-        with (CONFIG_DIR / f"{args.config_file}.yaml").open("r") as file:
-            config = yaml.load(file, Loader=yaml.FullLoader)
-    except FileNotFoundError:
-        logger.error("Config file not found. Please provide a valid yaml file.")
-        sys.exit(1)
-    return TransformerConfig(**config)
-
-
 def setup_wandb(config: TransformerConfig) -> WandbLogger | None:
     """Setup wandb if use_wandb is True. Else return None.
 
@@ -310,5 +288,8 @@ def main(config: TransformerConfig):
 
 
 if __name__ == "__main__":
-    config = load_config()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_file", type=str, help="Path to the yaml config file")
+    args = parser.parse_args()
+    config = load_config(args.config_file, logger)
     main(config)
