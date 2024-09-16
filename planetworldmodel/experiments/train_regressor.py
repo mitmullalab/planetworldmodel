@@ -103,17 +103,16 @@ class TransformerRegressor(LightningModule):
         dim_embedding: int,
         feature_dim: int,
         learning_rate: float,
+        max_seq_length: int = 5000,
     ):
         super().__init__()
         self.save_hyperparameters()
         self.model_name = model_name
         self.learning_rate = learning_rate
-
         self.embedding = nn.Linear(feature_dim, dim_embedding)
-        self.positional_encoding = PositionalEncoding(dim_embedding)
-
-        self.transformer_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=dim_embedding, nhead=num_heads),
+        self.positional_encoding = PositionalEncoding(dim_embedding, max_len=max_seq_length)
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=dim_embedding, nhead=num_heads),
             num_layers=num_layers,
         )
         self.regressor = nn.Linear(dim_embedding, feature_dim)
@@ -123,13 +122,13 @@ class TransformerRegressor(LightningModule):
         x = self.positional_encoding(x)
         x = x.permute(1, 0, 2)  # (seq_len, batch_size, dim_embedding) # noqa: FURB184
 
-        # Generate target mask
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(x.size(0)).to(
+        # Generate causal mask
+        mask = nn.Transformer.generate_square_subsequent_mask(x.size(0)).to(
             x.device
         )
 
         # memory is None because we are not using encoder
-        x = self.transformer_decoder(x, memory=None, tgt_mask=tgt_mask)
+        x = self.transformer(x, mask=mask)
         x = x.permute(1, 0, 2)  # (batch_size, seq_len, dim_embedding)  # noqa: FURB184
         return self.regressor(x)
 
