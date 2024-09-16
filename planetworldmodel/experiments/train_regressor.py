@@ -110,7 +110,9 @@ class TransformerRegressor(LightningModule):
         self.model_name = model_name
         self.learning_rate = learning_rate
         self.embedding = nn.Linear(feature_dim, dim_embedding)
-        self.positional_encoding = PositionalEncoding(dim_embedding, max_len=max_seq_length)
+        self.positional_encoding = PositionalEncoding(
+            dim_embedding, max_len=max_seq_length
+        )
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(d_model=dim_embedding, nhead=num_heads),
             num_layers=num_layers,
@@ -123,9 +125,7 @@ class TransformerRegressor(LightningModule):
         x = x.permute(1, 0, 2)  # (seq_len, batch_size, dim_embedding) # noqa: FURB184
 
         # Generate causal mask
-        mask = nn.Transformer.generate_square_subsequent_mask(x.size(0)).to(
-            x.device
-        )
+        mask = nn.Transformer.generate_square_subsequent_mask(x.size(0)).to(x.device)
 
         # memory is None because we are not using encoder
         x = self.transformer(x, mask=mask)
