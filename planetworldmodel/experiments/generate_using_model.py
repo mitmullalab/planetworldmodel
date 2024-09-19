@@ -6,7 +6,7 @@ import sys
 import numpy as np
 import torch
 
-from planetworldmodel.setting import CKPT_DIR
+from planetworldmodel.setting import CKPT_DIR, GEN_DATA_DIR
 from planetworldmodel import TransformerConfig, TransformerRegressor, load_config
 
 logging.basicConfig(level=logging.INFO)
@@ -102,7 +102,7 @@ def main(args):
     logger.info(f"Using device: {device}")
 
     # Load input sequence
-    input_sequence = np.load(args.input_sequence)
+    input_sequence = np.load(GEN_DATA_DIR / args.input_sequence)
     if input_sequence.ndim != 2 or input_sequence.shape[1] != 4:
         logger.error("Input sequence must have shape (x, 4).")
         sys.exit(1)
@@ -127,7 +127,7 @@ def main(args):
     )
 
     # Save the completed sequence
-    output_path = Path(args.output)
+    output_path = GEN_DATA_DIR / args.output_file
     np.save(output_path, completed_sequence)
     logger.info(f"Completed sequence saved to {output_path}.")
 
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         help="Path to the input numpy file containing the partial sequence (x, 4).",
     )
     parser.add_argument(
-        "--output",
+        "--output_file",
         type=str,
         required=True,
         help="Path to save the completed sequence as a numpy file.",
