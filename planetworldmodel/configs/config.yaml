@@ -1,10 +1,11 @@
-name: trial1
+name: obs_var_0.0
 num_layers: 8
 num_heads: 8
 dim_embedding: 512
 batch_size_per_device: 128
 learning_rate: 0.00002
 max_epochs: 50
+observation_variance: 0.0
 use_wandb: True
 wandb_project: ellipse
 wandb_entity: petergchang
