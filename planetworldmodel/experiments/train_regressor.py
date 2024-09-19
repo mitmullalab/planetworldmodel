@@ -174,7 +174,8 @@ def main(config: TransformerConfig):
 
     # Instantiate the data module and the model
     batch_size = config.batch_size_per_device * num_devices
-    data_module = SequenceDataModule(data_dir=DATA_DIR, batch_size=batch_size)
+    data_dir = DATA_DIR / f"obs_var_{config.obs_variance:.5f}"
+    data_module = SequenceDataModule(data_dir=data_dir, batch_size=batch_size)
 
     # Manually call setup to initialize the datasets
     data_module.setup()
