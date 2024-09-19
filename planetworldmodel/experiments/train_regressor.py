@@ -136,7 +136,7 @@ class TransformerRegressor(LightningModule):
         input_sequence = batch["input_sequence"]
         target_sequence = batch["target_sequence"]
         predictions = self(input_sequence)
-        loss = nn.MSELoss()(predictions, target_sequence)
+        loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
         self.log("train_loss", loss, prog_bar=True, logger=True)
         return loss
 
@@ -144,7 +144,7 @@ class TransformerRegressor(LightningModule):
         input_sequence = batch["input_sequence"]
         target_sequence = batch["target_sequence"]
         predictions = self(input_sequence)
-        loss = nn.MSELoss()(predictions, target_sequence)
+        loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
