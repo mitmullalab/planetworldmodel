@@ -1,10 +1,10 @@
-name: regressor
+name: trial1
 num_layers: 8
 num_heads: 8
 dim_embedding: 512
-batch_size_per_device: 32
-learning_rate: 0.00005
-max_epochs: 200
+batch_size_per_device: 128
+learning_rate: 0.00002
+max_epochs: 50
 use_wandb: True
-wandb_project: twobodyellipse
+wandb_project: ellipse
 wandb_entity: petergchang
