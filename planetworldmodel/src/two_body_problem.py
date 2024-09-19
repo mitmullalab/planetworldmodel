@@ -183,6 +183,8 @@ def generate_trajectories(
     problem: TwoBodyProblem,
     num_points: int = 1_000,
     dt: float_type = 10,  # 10 second
+    obs_variance: float_type = 0.0,
+    seed: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
@@ -191,11 +193,15 @@ def generate_trajectories(
         problem: TwoBodyProblem instance that contains the problem parameters.
         num_points: Number of points to generate along the orbit.
         dt: Time step in seconds between each point.
+        obs_variance: Variance of the observation noise.
+        seed: Random number generator seed.
 
     Returns:
         Tuple of two numpy arrays representing the trajectories of the two objects.
         The third element is the eccentricity of the orbit.
     """
+    rng = np.random.default_rng(seed)
+
     # Total mass and reduced mass
     mass_tot = problem.mass_1 + problem.mass_2
     mass_red = problem.gravitational_constant * mass_tot
@@ -250,4 +256,8 @@ def generate_trajectories(
     # Calculate the two objects' orbits
     orbit_1 = -orbit_rel * (problem.mass_2 / mass_tot)
     orbit_2 = orbit_rel * (problem.mass_1 / mass_tot)
+
+    # Add observation noise
+    orbit_1 += rng.normal(0, np.sqrt(obs_variance), size=orbit_1.shape)
+    orbit_2 += rng.normal(0, np.sqrt(obs_variance), size=orbit_2.shape)
     return orbit_1, orbit_2, e
