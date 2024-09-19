@@ -52,7 +52,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_trajectories_per_eccentricity",
         type=int,
-        default=5_000,
+        default=50_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(
