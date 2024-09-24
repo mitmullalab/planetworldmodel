@@ -3,7 +3,11 @@ import argparse
 import numpy as np
 import tqdm
 
-from planetworldmodel import generate_trajectories, random_two_body_problem
+from planetworldmodel import (
+    generate_trajectories,
+    generate_trajectory_with_heavier_fixed,
+    random_two_body_problem,
+)
 from planetworldmodel.setting import DATA_DIR
 
 
@@ -19,16 +23,21 @@ def main(args):
             for dataset in (train, val):
                 problem = random_two_body_problem(target_eccentricity=e, seed=seed)
                 seed += 1
-                traj_1, traj_2, _ = generate_trajectories(
-                    problem, args.num_points, args.dt, args.obs_variance, seed
-                )
-                seed += 1
+                if args.fix_heavier_object:
+                    traj_1, traj_2, _ = generate_trajectory_with_heavier_fixed(
+                        problem, args.num_points, args.dt, args.obs_variance, seed
+                    )
+                else:
+                    traj_1, traj_2, _ = generate_trajectories(
+                        problem, args.num_points, args.dt, args.obs_variance, seed
+                    )
                 traj = np.concatenate((traj_1[:, :2], traj_2[:, :2]), axis=1)
                 traj_min, traj_max = (
                     min(traj_min, traj.min()),
                     max(traj_max, traj.max()),
                 )
                 dataset.append(traj)
+                seed += 1
             pbar.update(1)
     pbar.close()
     print(f"Trajectory min: {traj_min}")
@@ -74,6 +83,11 @@ if __name__ == "__main__":
         type=float,
         default=0.0,
         help="Variance of the observation noise.",
+    )
+    parser.add_argument(
+        "--fix_heavier_object",
+        action="store_true",
+        help="Fix the heavier object at some random coordinate.",
     )
 
     args = parser.parse_args()
