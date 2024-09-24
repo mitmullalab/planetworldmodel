@@ -303,8 +303,8 @@ def generate_trajectory_with_heavier_fixed(
         rng: Random number generator or seed.
 
     Returns:
-        Tuple of the fixed coordinates of the heavier object, the relative orbit of the lighter object,
-        and the eccentricity of the orbit.
+        Tuple of the fixed coordinates of the heavier object, the relative orbit
+        of the lighter object, and the eccentricity of the orbit.
     """
 
     if isinstance(rng, int):
