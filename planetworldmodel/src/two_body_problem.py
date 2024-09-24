@@ -325,4 +325,5 @@ def generate_trajectory_with_heavier_fixed(
     relative_lighter_orbit = compute_relative_orbit(
         heavier_orbit, lighter_orbit, heavier_coord
     )
-    return heavier_coord, relative_lighter_orbit, e
+    heavier_orbit = np.repeat(heavier_coord[np.newaxis, :], num_points, axis=0)
+    return heavier_orbit, relative_lighter_orbit, e
