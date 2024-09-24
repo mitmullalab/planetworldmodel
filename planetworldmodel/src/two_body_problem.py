@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.random import Generator
 from pydantic import BaseModel, Field
 from scipy.optimize import newton
 
@@ -184,7 +185,7 @@ def generate_trajectories(
     num_points: int = 1_000,
     dt: float_type = 10,  # 10 second
     obs_variance: float_type = 0.0,
-    seed: int = 0,
+    rng: int | Generator = 0,
 ) -> tuple[np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
@@ -194,13 +195,14 @@ def generate_trajectories(
         num_points: Number of points to generate along the orbit.
         dt: Time step in seconds between each point.
         obs_variance: Variance of the observation noise.
-        seed: Random number generator seed.
+        rng: Random number generator or seed.
 
     Returns:
         Tuple of two numpy arrays representing the trajectories of the two objects.
         The third element is the eccentricity of the orbit.
     """
-    rng = np.random.default_rng(seed)
+    if isinstance(rng, int):
+        rng = np.random.default_rng(rng)
 
     # Total mass and reduced mass
     mass_tot = problem.mass_1 + problem.mass_2
@@ -261,3 +263,67 @@ def generate_trajectories(
     orbit_1 += rng.normal(0, np.sqrt(obs_variance), size=orbit_1.shape)
     orbit_2 += rng.normal(0, np.sqrt(obs_variance), size=orbit_2.shape)
     return orbit_1, orbit_2, e
+
+
+def compute_relative_orbit(
+    heavier_orbit: np.ndarray, lighter_orbit: np.ndarray, heavier_coord: np.ndarray
+) -> np.ndarray:
+    """Compute the lighter object's orbit relative to the fixed heavier object.
+
+    Args:
+        heavier_orbit: The original orbit of the heavier object
+        lighter_orbit: The original orbit of the lighter object
+        heavier_coord: The fixed coordinates of the heavier object
+
+    Returns:
+        The adjusted orbit of the lighter object relative to the fixed heavier object
+    """
+    # Calculate the offset of the heavier object from its fixed position
+    offset = heavier_orbit - heavier_coord
+
+    # Adjust the lighter object's orbit by subtracting this offset
+    relative_lighter_orbit = lighter_orbit - offset
+    return relative_lighter_orbit
+
+
+def generate_trajectory_with_heavier_fixed(
+    problem: TwoBodyProblem,
+    num_points: int = 1_000,
+    dt: float_type = 10,  # 10 second
+    obs_variance: float_type = 0.0,
+    rng: int | Generator = 0,
+) -> tuple[np.ndarray, np.ndarray, float_type]:
+    """Generate a trajectory with the heavier object fixed at some random coordinate.
+
+    Args:
+        problem: TwoBodyProblem instance that contains the problem parameters.
+        num_points: Number of points to generate along the orbit.
+        dt: Time step in seconds between each point.
+        obs_variance: Variance of the observation noise.
+        rng: Random number generator or seed.
+
+    Returns:
+        Tuple of the fixed coordinates of the heavier object, the relative orbit
+        of the lighter object, and the eccentricity of the orbit.
+    """
+
+    if isinstance(rng, int):
+        rng = np.random.default_rng(rng)
+
+    orbit_1, orbit_2, e = generate_trajectories(
+        problem, num_points, dt, obs_variance, rng
+    )
+
+    heavier_orbit, lighter_orbit = (
+        (orbit_1, orbit_2) if problem.mass_1 > problem.mass_2 else (orbit_2, orbit_1)
+    )
+
+    # Randomly sample the heavier object's coordinates
+    heavier_coord = rng.choice(heavier_orbit, size=1, axis=0).squeeze()
+
+    # Compute the lighter object's relative trajectory
+    relative_lighter_orbit = compute_relative_orbit(
+        heavier_orbit, lighter_orbit, heavier_coord
+    )
+    heavier_orbit = np.repeat(heavier_coord[np.newaxis, :], num_points, axis=0)
+    return heavier_orbit, relative_lighter_orbit, e
