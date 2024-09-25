@@ -30,7 +30,6 @@ class SequenceDataset(Dataset):
         sequence = self.data[idx]
         input_sequence = torch.tensor(sequence[:-1], dtype=torch.float32)
         target_sequence = torch.tensor(sequence[1:], dtype=torch.float32)
-
         return {
             "input_sequence": input_sequence,
             "target_sequence": target_sequence,
@@ -38,15 +37,27 @@ class SequenceDataset(Dataset):
 
 
 class SequenceDataModule(LightningDataModule):
-    def __init__(self, data_dir: Path, batch_size: int = 32, num_workers: int = 4):
+    def __init__(
+        self,
+        data_dir: Path,
+        batch_size: int = 32,
+        num_workers: int = 4,
+        hidden_state=False,
+    ):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
+        if hidden_state:
+            self.train_file = self.data_dir / "two_body_problem_hidden_state_train.npy"
+            self.val_file = self.data_dir / "two_body_problem_hidden_state_val.npy"
+        else:
+            self.train_file = self.data_dir / "two_body_problem_train.npy"
+            self.val_file = self.data_dir / "two_body_problem_val.npy"
 
     def setup(self, stage=None):
-        self.train = SequenceDataset(self.data_dir / "two_body_problem_train.npy")
-        self.val = SequenceDataset(self.data_dir / "two_body_problem_val.npy")
+        self.train = SequenceDataset(self.train_file)
+        self.val = SequenceDataset(self.val_file)
 
     def train_dataloader(self):
         return DataLoader(
@@ -174,8 +185,10 @@ def main(config: TransformerConfig):
 
     # Instantiate the data module and the model
     batch_size = config.batch_size_per_device * num_devices
-    data_dir = DATA_DIR / f"obs_var_{config.obs_variance:.5f}"
-    data_module = SequenceDataModule(data_dir=data_dir, batch_size=batch_size)
+    data_dir = DATA_DIR / f"obs_var_{config.observation_variance:.5f}"
+    data_module = SequenceDataModule(
+        data_dir=data_dir, batch_size=batch_size, hidden_state=config.hidden_state
+    )
 
     # Manually call setup to initialize the datasets
     data_module.setup()
