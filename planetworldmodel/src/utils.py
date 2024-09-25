@@ -17,6 +17,8 @@ class TransformerConfig(BaseModel):
     batch_size_per_device: int
     learning_rate: float
     max_epochs: int
+    observation_variance: float
+    hidden_state: bool
     use_wandb: bool
     wandb_project: str = Field(
         "", description="Wandb project name. If use_wandb is False, this is ignored."
