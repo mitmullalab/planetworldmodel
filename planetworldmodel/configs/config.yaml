@@ -1,11 +1,12 @@
-name: obs_var_0.0
+name: fig1-ntp-training
 num_layers: 8
 num_heads: 8
 dim_embedding: 512
-batch_size_per_device: 128
+batch_size_per_device: 64
 learning_rate: 0.00002
 max_epochs: 50
 observation_variance: 0.0
+hidden_state: True
 use_wandb: True
-wandb_project: ellipse
+wandb_project: iclr-world-model
 wandb_entity: petergchang
