@@ -56,7 +56,8 @@ disable = [
   "missing-docstring",
   "too-many-arguments",
   "too-many-lines",
-  "too-many-locals"
+  "too-many-locals",
+  "too-many-positional-arguments"
 ]
 
 [tool.setuptools_scm]
