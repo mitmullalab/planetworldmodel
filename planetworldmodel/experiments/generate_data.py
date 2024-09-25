@@ -1,4 +1,5 @@
 import argparse
+import json
 
 import numpy as np
 import tqdm
@@ -17,26 +18,30 @@ def main(args):
         total=len(args.eccentricities) * args.num_trajectories_per_eccentricity
     )
     traj_min, traj_max = np.inf, -np.inf
-    train, val = [], []
+    obs_tr, obs_val = [], []
+    state_tr, state_val = [], []
     for e in args.eccentricities:
         for _ in range(args.num_trajectories_per_eccentricity):
-            for dataset in (train, val):
+            for obs_ls, state_ls in ((obs_tr, state_tr), (obs_val, state_val)):
                 problem = random_two_body_problem(target_eccentricity=e, seed=seed)
                 seed += 1
                 if args.fix_heavier_object:
-                    traj_1, traj_2, _ = generate_trajectory_with_heavier_fixed(
+                    obs, state = generate_trajectory_with_heavier_fixed(
                         problem, args.num_points, args.dt, args.obs_variance, seed
                     )
+                    traj = obs.trajectory1
+                    obs_ls.append(traj)
+                    state_ls.append(state.model_dump())
                 else:
                     traj_1, traj_2, _ = generate_trajectories(
                         problem, args.num_points, args.dt, args.obs_variance, seed
                     )
-                traj = np.concatenate((traj_1[:, :2], traj_2[:, :2]), axis=1)
+                    traj = np.concatenate((traj_1, traj_2), axis=1)
+                    obs_ls.append(traj)
                 traj_min, traj_max = (
-                    min(traj_min, traj.min()),
-                    max(traj_max, traj.max()),
+                    min(traj_min, np.array(traj).min()),
+                    max(traj_max, np.array(traj).max()),
                 )
-                dataset.append(traj)
                 seed += 1
             pbar.update(1)
     pbar.close()
@@ -46,8 +51,16 @@ def main(args):
     # Save as a numpy file
     data_dir = DATA_DIR / f"obs_var_{args.obs_variance:.5f}"
     data_dir.mkdir(parents=True, exist_ok=True)
-    np.save(data_dir / "two_body_problem_train.npy", np.array(train))
-    np.save(data_dir / "two_body_problem_val.npy", np.array(val))
+    if args.fix_heavier_object:
+        np.save(data_dir / "obs_train_heavier_fixed.npy", np.array(obs_tr))
+        np.save(data_dir / "obs_val_heavier_fixed.npy", np.array(obs_val))
+        with open(data_dir / "state_train_heavier_fixed.json", "w") as f:
+            json.dump(state_tr, f)
+        with open(data_dir / "state_val_heavier_fixed.json", "w") as f:
+            json.dump(state_val, f)
+    else:
+        np.save(data_dir / "two_body_problem_train.npy", np.array(obs_tr))
+        np.save(data_dir / "two_body_problem_val.npy", np.array(obs_val))
 
 
 if __name__ == "__main__":
@@ -63,7 +76,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_trajectories_per_eccentricity",
         type=int,
-        default=50_000,
+        default=1_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(
