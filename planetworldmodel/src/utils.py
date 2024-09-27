@@ -31,7 +31,8 @@ class TransformerConfig(BaseModel):
     )
     pretrained_output_dim: int | None = Field(
         None,
-        description="Output dimension of the pretrained model. If None, the `output_dim` of the data is used.",
+        description="Output dimension of the pretrained model. "
+        "If None, the `output_dim` of the data is used.",
     )
     use_wandb: bool
     wandb_project: str = Field(
