@@ -1,5 +1,6 @@
 import logging
 import sys
+from typing import Literal
 import yaml
 
 from pydantic import BaseModel, Field
@@ -18,7 +19,21 @@ class TransformerConfig(BaseModel):
     learning_rate: float
     max_epochs: int
     observation_variance: float
-    hidden_state: bool
+    prediction_target: Literal["next_obs", "state", "function_of_state"]
+    pretrained_ckpt_dir: str | None = Field(
+        None,
+        description="Path to the pretrained checkpoint to load, if exists."
+        "If None, the `name` is used to load.",
+    )
+    new_ckpt_dir: str | None = Field(
+        None,
+        description="Path to save the new checkpoint. If None, the `name` is used.",
+    )
+    pretrained_output_dim: int | None = Field(
+        None,
+        description="Output dimension of the pretrained model. "
+        "If None, the `output_dim` of the data is used.",
+    )
     use_wandb: bool
     wandb_project: str = Field(
         "", description="Wandb project name. If use_wandb is False, this is ignored."
