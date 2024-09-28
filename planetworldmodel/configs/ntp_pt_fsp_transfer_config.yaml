@@ -4,11 +4,11 @@ num_heads: 8
 dim_embedding: 512
 batch_size_per_device: 128
 learning_rate: 0.00002
-max_epochs: 10
+max_epochs: 5
 observation_variance: 0.0
 prediction_target: function_of_state
-pretrained_ckpt_dir: fig2-ntp-pretrain
+pretrained_ckpt_dir: ntp-pretrain
 pretrained_output_dim: 2
 use_wandb: True
-wandb_project: iclr-transfer-learning-latest
+wandb_project: iclr-transfer-learning-fixed
 wandb_entity: petergchang

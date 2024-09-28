@@ -1,12 +1,12 @@
-name: fig2-ntp-pretrain
+name: ntp-pretrain
 num_layers: 8
 num_heads: 8
 dim_embedding: 512
 batch_size_per_device: 128
 learning_rate: 0.00002
-max_epochs: 10
+max_epochs: 5
 observation_variance: 0.0
 prediction_target: next_obs
 use_wandb: True
-wandb_project: iclr-ntp-pretrain
+wandb_project: iclr-ntp-pretrain-fixed
 wandb_entity: petergchang

@@ -128,13 +128,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_train_trajectories_per_eccentricity",
         type=int,
-        default=10,
+        default=10_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(
         "--num_val_trajectories_per_eccentricity",
         type=int,
-        default=10,
+        default=1_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(

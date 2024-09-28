@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 import sys
 from typing import Literal
 import yaml
@@ -33,6 +34,16 @@ class TransformerConfig(BaseModel):
         None,
         description="Output dimension of the pretrained model. "
         "If None, the `output_dim` of the data is used.",
+    )
+    store_predictions: bool = Field(
+        False,
+        description="Whether to store the predictions of the model."
+        "If True, the predictions are stored in the directory specified.",
+    )
+    prediction_path: Path | str | None = Field(
+        None,
+        description="Path to store the predictions. If None and store_predictions is True, "
+        "The default `predictions` directory is used.",
     )
     use_wandb: bool
     wandb_project: str = Field(
