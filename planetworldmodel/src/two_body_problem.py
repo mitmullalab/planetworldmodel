@@ -321,15 +321,6 @@ def generate_trajectories(
         orbit_rel[i] = compute_position(nui, a, e)
         orbit_vel_rel[i] = compute_velocity(nui, a, e, mass_red)
 
-    # # Rotate the orbit to match the initial orientation
-    # rotation_matrix = np.array([
-    #     [np.cos(nu_0), -np.sin(nu_0), 0],
-    #     [np.sin(nu_0), np.cos(nu_0), 0],
-    #     [0, 0, 1]
-    # ])
-    # orbit_rel = np.array([rotation_matrix @ pos for pos in orbit_rel])
-    # orbit_vel_rel = np.array([rotation_matrix @ vel for vel in orbit_vel_rel])
-
     # Rotate the orbit to match the initial position orientation
     rotation_matrix_r = np.array(
         [
