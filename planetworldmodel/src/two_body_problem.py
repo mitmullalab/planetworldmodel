@@ -467,17 +467,15 @@ def generate_trajectory_with_heavier_fixed(
 
     # Create TrajectoryState instance
     trajectory_state = TrajectoryState(
-        trajectory_light=relative_lighter_orbit.tolist(),
-        trajectory_heavy=heavier_coord,
+        trajectory1=relative_lighter_orbit.tolist(),
+        trajectory2=heavier_coord,
         relative_velocity=relative_velocity.tolist(),
-        m_light=mass_light,
-        m_heavy=mass_heavy,
+        m1=problem.mass_1,
+        m2=problem.mass_2,
         G=problem.gravitational_constant,
         eccentricity=e,
-        # energy=np.mean(energy),
-        # angular_momentum=np.mean(angular_momentum),
-        energy=energy,
-        angular_momentum=angular_momentum,
+        energy=np.mean(energy),
+        angular_momentum=np.mean(angular_momentum),
     )
 
     return trajectory_observation, trajectory_state
