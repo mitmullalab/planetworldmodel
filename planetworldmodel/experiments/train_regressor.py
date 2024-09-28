@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 from pathlib import Path
 from typing import Literal
@@ -13,7 +12,7 @@ from pytorch_lightning.accelerators import find_usable_cuda_devices
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from planetworldmodel import TransformerConfig, load_config, setup_wandb
-from planetworldmodel.setting import CKPT_DIR, DATA_DIR
+from planetworldmodel.setting import CKPT_DIR, DATA_DIR, GEN_DATA_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,77 +39,37 @@ class NextTokenPredictionDataset(Dataset):
 
 class StatePredictionDataset(Dataset):
     def __init__(self, file_path: Path):
-        with file_path.open() as f:
-            states = json.load(f)
+        states = np.load(file_path)
 
-        input_states = []
-        target_states = []
+        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
+        self.input_states = states[:, :, :2]
 
-        for state in states:
-            # Input state: trajectory1 (seq_len, feature_dim)
-            input_state = torch.tensor(state["trajectory1"], dtype=torch.float32)
-            input_states.append(input_state)
-            seq_length = input_state.shape[0]
-
-            # Target state: (seq_len, 3*feature_dim+2)
-            trajectory1 = torch.tensor(state["trajectory1"], dtype=torch.float32)
-            trajectory2 = torch.tensor(state["trajectory2"], dtype=torch.float32)
-            trajectory2 = trajectory2.unsqueeze(0).repeat(seq_length, 1)
-
-            relative_velocity = torch.tensor(
-                state["relative_velocity"], dtype=torch.float32
-            )
-            m1, m2 = state["m1"], state["m2"]
-            log_m1, log_m2 = np.log(m1), np.log(m2)  # Make the values smaller
-            m1 = torch.full((seq_length, 1), log_m1, dtype=torch.float32)
-            m2 = torch.full((seq_length, 1), log_m2, dtype=torch.float32)
-            target_state = torch.cat(
-                [trajectory1, trajectory2, relative_velocity, m1, m2], dim=1
-            )
-            target_states.append(target_state)
-
-        self.input_states = torch.stack(input_states)
-        self.target_states = torch.stack(target_states)
+        # Target state: (num_data, seq_len, 3*feature_dim+2)
+        # lighter trajectory, heavier trajectory, relative velocity, log(m1), log(m2)
+        self.target_states = states[:, :, :-2]
 
     def __len__(self) -> int:
         return len(self.input_states)
 
     def __getitem__(self, idx: int) -> dict:
         return {
-            "input_sequence": self.input_states[idx],
-            "target_sequence": self.target_states[idx],
+            "input_sequence": torch.tensor(self.input_states[idx], dtype=torch.float32),
+            "target_sequence": torch.tensor(
+                self.target_states[idx], dtype=torch.float32
+            ),
         }
 
 
 class FunctionOfStatePredictionDataset(Dataset):
     def __init__(self, file_path: Path):
-        with file_path.open() as f:
-            states = json.load(f)
+        states = np.load(file_path)
 
-        input_states = []
-        target_states = []
+        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
+        self.input_states = torch.tensor(states[:, :, :2], dtype=torch.float32)
 
-        for state in states:
-            # Input state: trajectory1 (seq_len, feature_dim)
-            input_state = torch.tensor(state["trajectory1"][:-1], dtype=torch.float32)
-            input_states.append(input_state)
-            seq_length = input_state.shape[0]
-
-            # Target state: (seq_len, 2)
-            m1, m2 = state["m1"], state["m2"]
-            log_m1, log_m2 = 2 * np.log(m1), 2 * np.log(m2)  # Make the values smaller
-            m1 = torch.full((seq_length, 1), log_m1, dtype=torch.float32)
-            m2 = torch.full((seq_length, 1), log_m2, dtype=torch.float32)
-            energy, angular_momentum = state["energy"], state["angular_momentum"]
-            log_e = np.sign(energy) * np.log1p(np.abs(energy))  # Signed log
-            log_L = np.log1p(angular_momentum)
-            log_e = torch.full((seq_length, 1), log_e, dtype=torch.float32)
-            log_L = torch.full((seq_length, 1), log_L, dtype=torch.float32)
-            target_state = torch.cat([log_e, log_L], dim=1)
-            target_states.append(target_state)
-
-        self.input_states = torch.stack(input_states)
-        self.target_states = torch.stack(target_states)
+        # Target state: (num_data, seq_len, 2)
+        # log(energy), log(angular_momentum)
+        self.target_states = torch.tensor(states[:, :, -2:], dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.input_states)
@@ -140,8 +99,8 @@ class SequenceDataModule(LightningDataModule):
             train_file = "obs_train_heavier_fixed.npy"
             val_file = "obs_val_heavier_fixed.npy"
         else:
-            train_file = "state_train_heavier_fixed.json"
-            val_file = "state_val_heavier_fixed.json"
+            train_file = "state_train_heavier_fixed.npy"
+            val_file = "state_val_heavier_fixed.npy"
         self.train_file = self.data_dir / train_file
         self.val_file = self.data_dir / val_file
         self.prediction_target = prediction_target
@@ -212,6 +171,8 @@ class TransformerRegressor(LightningModule):
         learning_rate: float,
         max_seq_length: int = 5000,
         output_dim: int | None = None,
+        store_predictions: bool = False,
+        prediction_path: Path | str | None = "predictions",
     ):
         if output_dim is None:
             output_dim = feature_dim
@@ -228,6 +189,10 @@ class TransformerRegressor(LightningModule):
             num_layers=num_layers,
         )
         self.regressor = nn.Linear(dim_embedding, output_dim)
+        self.store_predictions = store_predictions
+        self.prediction_path = prediction_path
+        self.inputs: list = []
+        self.predictions: list = []
 
     def forward(self, x):
         x = self.embedding(x)  # (batch_size, seq_len, dim_embedding)
@@ -248,7 +213,34 @@ class TransformerRegressor(LightningModule):
         predictions = self(input_sequence)
         loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
         self.log("train_loss", loss, prog_bar=True, logger=True)
+        if self.store_predictions:
+            self.predictions.append(predictions.detach().cpu())
+            self.inputs.append(input_sequence.detach().cpu())
         return loss
+
+    def on_train_epoch_end(self):
+        if not self.store_predictions:
+            return
+        epoch_predictions = np.array(self.predictions, dtype=object)
+        epoch_inputs = np.array(self.inputs, dtype=object)
+
+        # Save predictions and inputs
+        if self.prediction_path:
+            prediction_path = GEN_DATA_DIR / self.prediction_path
+        else:
+            prediction_path = GEN_DATA_DIR / "predictions"
+        prediction_path.mkdir(exist_ok=True, parents=True)
+        np.save(
+            prediction_path / f"predictions_epoch_{self.current_epoch}.npy",
+            epoch_predictions,
+        )
+        np.save(
+            prediction_path / f"inputs_epoch_{self.current_epoch}.npy", epoch_inputs
+        )
+
+        # Clear for next epoch
+        self.predictions = []
+        self.inputs = []
 
     def validation_step(self, batch, batch_idx):
         input_sequence = batch["input_sequence"]
@@ -280,8 +272,6 @@ def load_model(
         The TransformerRegressor model object.
     """
     pretrained_output_dim = config.pretrained_output_dim or output_dim
-    print(f"Pretrained output dim: {pretrained_output_dim}")
-    print(f"Output dim: {output_dim}")
 
     # Initialize the model
     model = TransformerRegressor(
@@ -292,6 +282,8 @@ def load_model(
         feature_dim,
         config.learning_rate,
         output_dim=pretrained_output_dim,
+        store_predictions=config.store_predictions,
+        prediction_path=config.prediction_path,
     )
 
     # Load the pretrained weights, if they exist
