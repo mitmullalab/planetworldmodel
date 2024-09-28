@@ -45,11 +45,11 @@ class TrajectoryState(BaseModel):
         "arbitrary_types_allowed": True,
     }
 
-    trajectory1: list
-    trajectory2: list
+    trajectory_light: list
+    trajectory_heavy: list
     relative_velocity: list
-    m1: float_type
-    m2: float_type
+    m_light: float_type
+    m_heavy: float_type
     G: float_type
     eccentricity: float_type
     energy: float_type
@@ -203,6 +203,41 @@ def compute_position(nu: float_type, a: float_type, e: float_type) -> np.ndarray
     return np.array([r * np.cos(nu), r * np.sin(nu), 0])
 
 
+def compute_velocity(
+    nu: float_type, a: float_type, e: float_type, mu: float_type
+) -> np.ndarray:
+    """Compute the velocity vector in the orbital plane.
+    Assumes the entire orbit is in the x-y plane.
+
+    Args:
+        nu: True anomaly
+        a: Semi-major axis
+        e: Eccentricity
+        mu: Standard gravitational parameter (G * M)
+
+    Returns:
+        Velocity vector in the orbital plane.
+    """
+    if is_nearly_parabolic(e):
+        p = 2 * a
+        v_r = np.sqrt(mu / p) * np.sin(nu)
+        v_theta = np.sqrt(mu / p) * (1 + np.cos(nu))
+    elif e < 1:  # Elliptical orbit
+        v_r = np.sqrt(mu / (a * (1 - e**2))) * e * np.sin(nu)
+        v_theta = np.sqrt(mu / (a * (1 - e**2))) * (1 + e * np.cos(nu))
+    else:  # Hyperbolic orbit
+        v_r = np.sqrt(mu / (a * (e**2 - 1))) * e * np.sin(nu)
+        v_theta = np.sqrt(mu / (a * (e**2 - 1))) * (1 + e * np.cos(nu))
+
+    return np.array(
+        [
+            -v_r * np.sin(nu) + v_theta * np.cos(nu),
+            v_r * np.cos(nu) + v_theta * np.sin(nu),
+            0,
+        ]
+    )
+
+
 def generate_trajectories(
     problem: TwoBodyProblem,
     num_points: int = 1_000,
@@ -210,7 +245,7 @@ def generate_trajectories(
     obs_variance: float_type = 0.0,
     two_dimensional: bool = True,
     rng: int | Generator = 0,
-) -> tuple[np.ndarray, np.ndarray, float_type]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float_type]:
     """Generate the trajectories of the two objects in the two-body problem.
     Assumes the entire orbit is in the x-y plane.
 
@@ -223,7 +258,8 @@ def generate_trajectories(
         rng: Random number generator or seed.
 
     Returns:
-        Tuple of two numpy arrays representing the trajectories of the two objects
+        Tuple of two numpy arrays representing the trajectories of the two objects,
+        two numpy arrays representing the velocities of the two objects,
         and the eccentricity of the orbit.
     """
     if isinstance(rng, int):
@@ -277,21 +313,61 @@ def generate_trajectories(
             ]
         )
 
-    # Calculate orbit
-    orbit_rel = np.array([compute_position(nui, a, e) for nui in nu])
+    # Calculate orbit positions and velocities
+    orbit_rel = np.zeros((num_points, 3))
+    orbit_vel_rel = np.zeros((num_points, 3))
+
+    for i, nui in enumerate(nu):
+        orbit_rel[i] = compute_position(nui, a, e)
+        orbit_vel_rel[i] = compute_velocity(nui, a, e, mass_red)
+
+    # # Rotate the orbit to match the initial orientation
+    # rotation_matrix = np.array([
+    #     [np.cos(nu_0), -np.sin(nu_0), 0],
+    #     [np.sin(nu_0), np.cos(nu_0), 0],
+    #     [0, 0, 1]
+    # ])
+    # orbit_rel = np.array([rotation_matrix @ pos for pos in orbit_rel])
+    # orbit_vel_rel = np.array([rotation_matrix @ vel for vel in orbit_vel_rel])
+
+    # Rotate the orbit to match the initial position orientation
+    rotation_matrix_r = np.array(
+        [
+            [np.cos(problem.r_0_angle), -np.sin(problem.r_0_angle), 0],
+            [np.sin(problem.r_0_angle), np.cos(problem.r_0_angle), 0],
+            [0, 0, 1],
+        ]
+    )
+    orbit_rel = np.array([rotation_matrix_r @ pos for pos in orbit_rel])
+
+    # Rotate the velocities to match the initial velocity orientation
+    rotation_matrix_v = np.array(
+        [
+            [np.cos(problem.v_0_angle), -np.sin(problem.v_0_angle), 0],
+            [np.sin(problem.v_0_angle), np.cos(problem.v_0_angle), 0],
+            [0, 0, 1],
+        ]
+    )
+    orbit_vel_rel = np.array([rotation_matrix_v @ vel for vel in orbit_vel_rel])
 
     # Calculate the two objects' orbits
     orbit_1 = -orbit_rel * (problem.mass_2 / mass_tot)
     orbit_2 = orbit_rel * (problem.mass_1 / mass_tot)
+    vel_1 = -orbit_vel_rel * (problem.mass_2 / mass_tot)
+    vel_2 = orbit_vel_rel * (problem.mass_1 / mass_tot)
 
     # Add observation noise
     orbit_1 += rng.normal(0, np.sqrt(obs_variance), size=orbit_1.shape)
     orbit_2 += rng.normal(0, np.sqrt(obs_variance), size=orbit_2.shape)
+    vel_1 += rng.normal(0, np.sqrt(obs_variance), size=vel_1.shape)
+    vel_2 += rng.normal(0, np.sqrt(obs_variance), size=vel_2.shape)
 
     if two_dimensional:
         orbit_1 = orbit_1[:, :2]
         orbit_2 = orbit_2[:, :2]
-    return orbit_1, orbit_2, e
+        vel_1 = vel_1[:, :2]
+        vel_2 = vel_2[:, :2]
+    return orbit_1, orbit_2, vel_1, vel_2, e
 
 
 def compute_relative_orbit(
@@ -341,13 +417,18 @@ def generate_trajectory_with_heavier_fixed(
     if isinstance(rng, int):
         rng = np.random.default_rng(rng)
 
-    orbit_1, orbit_2, e = generate_trajectories(
+    orbit_1, orbit_2, vel_1, vel_2, e = generate_trajectories(
         problem, num_points, dt, obs_variance, two_dimensional, rng
     )
 
-    heavier_orbit, lighter_orbit = (
-        (orbit_1, orbit_2) if problem.mass_1 > problem.mass_2 else (orbit_2, orbit_1)
-    )
+    if problem.mass_1 > problem.mass_2:
+        heavier_orbit, lighter_orbit = orbit_1, orbit_2
+        mass_heavy, mass_light = problem.mass_1, problem.mass_2
+        vel_heavy, vel_light = vel_1, vel_2
+    else:
+        heavier_orbit, lighter_orbit = orbit_2, orbit_1
+        mass_heavy, mass_light = problem.mass_2, problem.mass_1
+        vel_heavy, vel_light = vel_2, vel_1
 
     # Randomly sample the heavier object's coordinates
     heavier_coord = rng.choice(heavier_orbit, size=1, axis=0).squeeze()
@@ -359,10 +440,7 @@ def generate_trajectory_with_heavier_fixed(
     heavier_orbit = np.repeat(heavier_coord[np.newaxis, :], num_points, axis=0)
 
     # Calculate relative velocity
-    relative_velocity = np.diff(relative_lighter_orbit, axis=0) / dt
-    relative_velocity = np.vstack(
-        [relative_velocity, relative_velocity[-1]]
-    )  # Repeat the last velocity for length consistency
+    relative_velocity = vel_light - vel_heavy
 
     # Calculate total mass and reduced mass
     total_mass = problem.mass_1 + problem.mass_2
@@ -389,15 +467,17 @@ def generate_trajectory_with_heavier_fixed(
 
     # Create TrajectoryState instance
     trajectory_state = TrajectoryState(
-        trajectory1=relative_lighter_orbit.tolist(),
-        trajectory2=heavier_coord,
+        trajectory_light=relative_lighter_orbit.tolist(),
+        trajectory_heavy=heavier_coord,
         relative_velocity=relative_velocity.tolist(),
-        m1=problem.mass_1,
-        m2=problem.mass_2,
+        m_light=mass_light,
+        m_heavy=mass_heavy,
         G=problem.gravitational_constant,
         eccentricity=e,
-        energy=np.mean(energy),
-        angular_momentum=np.mean(angular_momentum),
+        # energy=np.mean(energy),
+        # angular_momentum=np.mean(angular_momentum),
+        energy=energy,
+        angular_momentum=angular_momentum,
     )
 
     return trajectory_observation, trajectory_state
