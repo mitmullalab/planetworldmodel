@@ -20,7 +20,7 @@ class TransformerConfig(BaseModel):
     learning_rate: float
     max_epochs: int
     observation_variance: float
-    prediction_target: Literal["next_obs", "state", "function_of_state"]
+    prediction_target: Literal["next_obs", "state", "function_of_state", "mass", "noise", "force_fixed_pos", "force_var_pos"]
     pretrained_ckpt_dir: str | None = Field(
         None,
         description="Path to the pretrained checkpoint to load, if exists."
@@ -52,6 +52,7 @@ class TransformerConfig(BaseModel):
     wandb_entity: str = Field(
         "", description="Wandb entity name. If use_wandb is False, this is ignored."
     )
+    seed: int = Field(0, description="Random seed.")
 
 
 def load_config(config_file: str, logger: logging.Logger) -> TransformerConfig:
