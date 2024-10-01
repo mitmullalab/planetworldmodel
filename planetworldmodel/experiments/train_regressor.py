@@ -42,23 +42,41 @@ class StatePredictionDataset(Dataset):
         states = np.load(file_path)
 
         # Input state: lighter trajectory (num_data, seq_len, feature_dim)
-        self.input_states = states[:, :, :2]
+        self.input_states = torch.tensor(states[:, :, :2], dtype=torch.float32)
 
         # Target state: (num_data, seq_len, 3*feature_dim+2)
         # lighter trajectory, heavier trajectory, relative velocity, log(m1), log(m2)
-        self.target_states = states[:, :, :-2]
+        self.target_states = torch.tensor(states[:, :, :-2], dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.input_states)
 
     def __getitem__(self, idx: int) -> dict:
         return {
-            "input_sequence": torch.tensor(self.input_states[idx], dtype=torch.float32),
-            "target_sequence": torch.tensor(
-                self.target_states[idx], dtype=torch.float32
-            ),
+            "input_sequence": self.input_states[idx],
+            "target_sequence": self.target_states[idx],
         }
+        
 
+class MassPredictionDataset(Dataset):
+    def __init__(self, file_path: Path):
+        states = np.load(file_path)
+
+        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
+        self.input_states = torch.tensor(states[:, :, :2], dtype=torch.float32)
+
+        # Target state: (num_data, seq_len, 1)
+        self.target_states = torch.tensor(states[:, :, -3:-2], dtype=torch.float32)
+
+    def __len__(self) -> int:
+        return len(self.input_states)
+
+    def __getitem__(self, idx: int) -> dict:
+        return {
+            "input_sequence": self.input_states[idx],
+            "target_sequence": self.target_states[idx],
+        }
+        
 
 class FunctionOfStatePredictionDataset(Dataset):
     def __init__(self, file_path: Path):
@@ -88,7 +106,7 @@ class SequenceDataModule(LightningDataModule):
         batch_size: int = 32,
         num_workers: int = 4,
         prediction_target: Literal[
-            "next_obs", "state", "function_of_state"
+            "next_obs", "state", "function_of_state", "mass"
         ] = "next_obs",
     ):
         super().__init__()
@@ -99,8 +117,8 @@ class SequenceDataModule(LightningDataModule):
             train_file = "obs_train_heavier_fixed.npy"
             val_file = "obs_val_heavier_fixed.npy"
         else:
-            train_file = "state_train_heavier_fixed.npy"
-            val_file = "state_val_heavier_fixed.npy"
+            train_file = "standardized_state_train_heavier_fixed.npy"
+            val_file = "standardized_state_val_heavier_fixed.npy"
         self.train_file = self.data_dir / train_file
         self.val_file = self.data_dir / val_file
         self.prediction_target = prediction_target
@@ -112,6 +130,9 @@ class SequenceDataModule(LightningDataModule):
         elif self.prediction_target == "state":
             self.train = StatePredictionDataset(self.train_file)
             self.val = StatePredictionDataset(self.val_file)
+        elif self.prediction_target == "mass":
+            self.train = MassPredictionDataset(self.train_file)
+            self.val = MassPredictionDataset(self.val_file)
         else:
             self.train = FunctionOfStatePredictionDataset(self.train_file)
             self.val = FunctionOfStatePredictionDataset(self.val_file)
@@ -193,6 +214,7 @@ class TransformerRegressor(LightningModule):
         self.prediction_path = prediction_path
         self.inputs: list = []
         self.predictions: list = []
+        self.targets: list = []
 
     def forward(self, x):
         x = self.embedding(x)  # (batch_size, seq_len, dim_embedding)
@@ -214,15 +236,18 @@ class TransformerRegressor(LightningModule):
         loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
         self.log("train_loss", loss, prog_bar=True, logger=True)
         if self.store_predictions:
-            self.predictions.append(predictions.detach().cpu())
-            self.inputs.append(input_sequence.detach().cpu())
+            self.predictions.append(predictions.detach().cpu().numpy())
+            self.inputs.append(input_sequence.detach().cpu().numpy())
+            self.targets.append(target_sequence.detach().cpu().numpy())
         return loss
 
     def on_train_epoch_end(self):
         if not self.store_predictions:
             return
+
         epoch_predictions = np.array(self.predictions, dtype=object)
         epoch_inputs = np.array(self.inputs, dtype=object)
+        epoch_targets = np.array(self.targets, dtype=object)
 
         # Save predictions and inputs
         if self.prediction_path:
@@ -237,10 +262,14 @@ class TransformerRegressor(LightningModule):
         np.save(
             prediction_path / f"inputs_epoch_{self.current_epoch}.npy", epoch_inputs
         )
+        np.save(
+            prediction_path / f"targets_epoch_{self.current_epoch}.npy", epoch_targets
+        )
 
         # Clear for next epoch
         self.predictions = []
         self.inputs = []
+        self.targets = []
 
     def validation_step(self, batch, batch_idx):
         input_sequence = batch["input_sequence"]
@@ -251,6 +280,7 @@ class TransformerRegressor(LightningModule):
         return loss
 
     def configure_optimizers(self):
+        print(f"learning_rate: {self.learning_rate}")
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
         return optimizer
 
