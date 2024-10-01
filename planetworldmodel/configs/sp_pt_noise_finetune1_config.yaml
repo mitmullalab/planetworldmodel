@@ -1,0 +1,15 @@
+name: sp_pt_noise_finetune1
+num_layers: 8
+num_heads: 8
+dim_embedding: 512
+batch_size_per_device: 64
+learning_rate: 0.00002
+max_epochs: 100
+observation_variance: 0.0
+prediction_target: noise
+pretrained_ckpt_dir: sp-pretrain
+pretrained_output_dim: 8
+use_wandb: True
+wandb_project: iclr-noise-prediction
+wandb_entity: petergchang
+seed: 1
