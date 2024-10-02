@@ -1,12 +1,12 @@
 import argparse
 import logging
+import os
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.accelerators import find_usable_cuda_devices
@@ -19,76 +19,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class NextTokenPredictionDataset(Dataset):
-    def __init__(self, file_path: Path):
-        self.data = np.load(file_path)
-        self.seq_len = self.data.shape[1]
-        self.feature_dim = self.data.shape[2]
-
-    def __len__(self) -> int:
-        return len(self.data)
-
-    def __getitem__(self, idx: int) -> dict:
-        sequence = self.data[idx]
-        input_sequence = torch.tensor(sequence[:-1], dtype=torch.float32)
-        target_sequence = torch.tensor(sequence[1:], dtype=torch.float32)
-        return {
-            "input_sequence": input_sequence,
-            "target_sequence": target_sequence,
-        }
-
-
-class StatePredictionDataset(Dataset):
-    def __init__(self, file_path: Path):
-        states = np.load(file_path)
+class ForcePredictionDataset(Dataset):
+    def __init__(self, input_file_path: Path, target_file_path: Path):
+        inputs = np.load(input_file_path)
+        targets = np.atleast_3d(np.load(target_file_path))
 
         # Input state: lighter trajectory (num_data, seq_len, feature_dim)
-        self.input_states = torch.tensor(states[:, :, :2], dtype=torch.float32)
+        self.input_states = torch.tensor(inputs, dtype=torch.float32)
 
-        # Target state: (num_data, seq_len, 3*feature_dim+2)
-        # lighter trajectory, heavier trajectory, relative velocity, log(m1), log(m2)
-        self.target_states = torch.tensor(states[:, :, :-2], dtype=torch.float32)
-
-    def __len__(self) -> int:
-        return len(self.input_states)
-
-    def __getitem__(self, idx: int) -> dict:
-        return {
-            "input_sequence": self.input_states[idx],
-            "target_sequence": self.target_states[idx],
-        }
-        
-
-class MassPredictionDataset(Dataset):
-    def __init__(self, file_path: Path):
-        states = np.load(file_path)
-
-        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
-        self.input_states = torch.tensor(states[:, :, :2], dtype=torch.float32)
-
-        # Target state: (num_data, seq_len, 1)
-        self.target_states = torch.tensor(states[:, :, -3:-2], dtype=torch.float32)
-
-    def __len__(self) -> int:
-        return len(self.input_states)
-
-    def __getitem__(self, idx: int) -> dict:
-        return {
-            "input_sequence": self.input_states[idx],
-            "target_sequence": self.target_states[idx],
-        }
-        
-
-class FunctionOfStatePredictionDataset(Dataset):
-    def __init__(self, file_path: Path):
-        states = np.load(file_path)
-
-        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
-        self.input_states = torch.tensor(states[:, :, :2], dtype=torch.float32)
-
-        # Target state: (num_data, seq_len, 2)
-        # log(energy), log(angular_momentum)
-        self.target_states = torch.tensor(states[:, :, -2:], dtype=torch.float32)
+        # Target force vector: (num_data, seq_len, feature_dim)
+        self.target_states = torch.tensor(targets, dtype=torch.float32)
+        print(f"test target: {targets.min():.2f} to {targets.max():.2f} with shape {targets.shape}")
 
     def __len__(self) -> int:
         return len(self.input_states)
@@ -100,43 +41,42 @@ class FunctionOfStatePredictionDataset(Dataset):
         }
 
 
-class SequenceDataModule(LightningDataModule):
+class SequenceForceDataModule(LightningDataModule):
     def __init__(
         self,
         data_dir: Path,
         batch_size: int = 32,
         num_workers: int = 4,
         prediction_target: Literal[
-            "next_obs", "state", "function_of_state", "mass"
-        ] = "next_obs",
+            "force_fixed_pos", "force_var_pos"
+        ] = "force_fixed_pos",
     ):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
-        if prediction_target == "next_obs":
+        if prediction_target == "force_fixed_pos":
             train_file = "obs_train_heavier_fixed.npy"
+            train_target_file = "force_train_heavier_fixed.npy"
             val_file = "obs_val_heavier_fixed.npy"
+            val_target_file = "force_val_heavier_fixed.npy"
         else:
-            train_file = "standardized_state_train_heavier_fixed.npy"
-            val_file = "standardized_state_val_heavier_fixed.npy"
+            train_file = "obs_train.npy"
+            train_target_file = "force_train.npy"
+            val_file = "obs_val.npy"
+            val_target_file = "force_val.npy"
         self.train_file = self.data_dir / train_file
+        self.train_target_file = self.data_dir / train_target_file
         self.val_file = self.data_dir / val_file
-        self.prediction_target = prediction_target
+        self.val_target_file = self.data_dir / val_target_file
 
     def setup(self, stage=None):
-        if self.prediction_target == "next_obs":
-            self.train = NextTokenPredictionDataset(self.train_file)
-            self.val = NextTokenPredictionDataset(self.val_file)
-        elif self.prediction_target == "state":
-            self.train = StatePredictionDataset(self.train_file)
-            self.val = StatePredictionDataset(self.val_file)
-        elif self.prediction_target == "mass":
-            self.train = MassPredictionDataset(self.train_file)
-            self.val = MassPredictionDataset(self.val_file)
-        else:
-            self.train = FunctionOfStatePredictionDataset(self.train_file)
-            self.val = FunctionOfStatePredictionDataset(self.val_file)
+        self.train = ForcePredictionDataset(
+            self.train_file, self.train_target_file
+        )
+        self.val = ForcePredictionDataset(
+            self.val_file, self.val_target_file
+        )
 
     def train_dataloader(self):
         return DataLoader(
@@ -280,18 +220,63 @@ class TransformerRegressor(LightningModule):
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
+    def test_step(self, batch, batch_idx):
+        input_sequence = batch["input_sequence"]
+        target_sequence = batch["target_sequence"]
+        predictions = self(input_sequence)
+        loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
+        self.log("test_loss", loss, prog_bar=True, sync_dist=True)
+        return loss
+
     def configure_optimizers(self):
-        print(f"Initial learning_rate: {self.learning_rate}")
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-                "frequency": 1
-            },
-        }
+        return optimizer
+
+
+class BestModelPredictionSaver(ModelCheckpoint):
+    def __init__(self, dirpath, filename, test_dataloader):
+        super().__init__(dirpath=dirpath, filename=filename, save_top_k=1, monitor='val_loss', mode='min')
+        self.test_dataloader = test_dataloader
+        self.best_val_loss = float('inf')
+
+    def on_validation_end(self, trainer, pl_module):
+        super().on_validation_end(trainer, pl_module)
+        current_val_loss = trainer.callback_metrics.get('val_loss')
+        
+        if current_val_loss < self.best_val_loss:
+            self.best_val_loss = current_val_loss
+            self.save_predictions(trainer, pl_module)
+
+    def save_predictions(self, trainer, pl_module):
+        pl_module.eval()
+        inputs = []
+        predictions = []
+        targets = []
+        
+        with torch.no_grad():
+            for batch in self.test_dataloader:
+                input_sequence = batch["input_sequence"].to(pl_module.device)
+                target_sequence = batch["target_sequence"]
+                pred = pl_module(input_sequence)
+                inputs.append(input_sequence.cpu().numpy())
+                predictions.append(pred.cpu().numpy())
+                targets.append(target_sequence.numpy())
+        
+        inputs = np.concatenate(inputs)
+        predictions = np.concatenate(predictions)
+        targets = np.concatenate(targets)
+        
+        print(self.dirpath)
+        print(inputs[-1,:10])
+        print(targets[-1,:10])
+        
+                
+        os.makedirs(self.dirpath, exist_ok=True)
+        np.save(f"{self.dirpath}/best_inputs.npy", inputs)
+        np.save(f"{self.dirpath}/best_predictions.npy", predictions)
+        np.save(f"{self.dirpath}/best_targets.npy", targets)
+        
+        pl_module.train()
 
 
 def load_model(
@@ -350,18 +335,33 @@ def load_model(
 def main(config: TransformerConfig):
     torch.set_float32_matmul_precision("medium")
     devices = find_usable_cuda_devices()
-    print(f"Devices: {devices}")
     num_devices = len(devices)
     wandb_logger = setup_wandb(config)
 
     # Instantiate the data module
     batch_size = config.batch_size_per_device * num_devices
-    # data_dir = DATA_DIR / f"obs_var_{config.observation_variance:.5f}"
-    data_dir = DATA_DIR / f"two_body_problem"
-    data_module = SequenceDataModule(
+    data_dir = DATA_DIR / f"force_magnitudes"
+    data_module = SequenceForceDataModule(
         data_dir=data_dir,
         batch_size=batch_size,
         prediction_target=config.prediction_target,
+    )
+    
+    # Create test dataloader
+    if config.prediction_target == "force_fixed_pos":
+        test_file = "obs_test_heavier_fixed.npy"
+        test_target_file = "force_test_heavier_fixed.npy"
+    else:
+        test_file = "obs_test.npy"
+        test_target_file = "force_test.npy"
+    test_data = ForcePredictionDataset(
+        data_dir / test_file, data_dir / test_target_file,
+    )
+    test_dataloader = DataLoader(
+        test_data,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=data_module.num_workers
     )
 
     # Manually call setup to initialize the datasets
@@ -371,6 +371,7 @@ def main(config: TransformerConfig):
     sample = data_module.train[0]
     feature_dim = sample["input_sequence"].shape[-1]
     output_dim = sample["target_sequence"].shape[-1]
+    print(f"feature_dim: {feature_dim}, output_dim: {output_dim}")
 
     # Load the pretrained model
     model = load_model(config, feature_dim, output_dim)
@@ -378,38 +379,24 @@ def main(config: TransformerConfig):
     # Set up new checkpoint directory
     ckpt_name = config.new_ckpt_dir or config.name
     ckpt_dir = CKPT_DIR / ckpt_name
-    # best_checkpoint = ckpt_dir / "best.ckpt"
-    # resume_checkpoint = best_checkpoint if best_checkpoint.exists() else None
-    last_checkpoint = ckpt_dir / "last.ckpt"
-    resume_checkpoint = last_checkpoint if last_checkpoint.exists() else None
+    best_checkpoint = ckpt_dir / "best.ckpt"
+    resume_checkpoint = best_checkpoint if best_checkpoint.exists() else None
     
-    # Modified checkpoint callback configuration
-    checkpoint_callback = ModelCheckpoint(
-        dirpath=ckpt_dir,
-        filename="epoch_{epoch:02d}",  # This will create checkpoints like "epoch_01.ckpt", "epoch_02.ckpt", etc.
-        save_top_k=-1,  # Save all checkpoints
-        every_n_epochs=20,  # Save a checkpoint every epoch
-        save_last=True,  # Still save the last checkpoint
-    )
-
-    # Additional checkpoint callback for saving the best model
-    best_model_callback = ModelCheckpoint(
+    best_model_saver = BestModelPredictionSaver(
         dirpath=ckpt_dir,
         filename="best",
-        monitor="val_loss",
-        mode="min",
-        save_top_k=1,
+        test_dataloader=test_dataloader
     )
 
     # Set up trainer and fit the model
     trainer = Trainer(
         max_epochs=config.max_epochs,
-        callbacks=[checkpoint_callback, best_model_callback],  # Add both callbacks
+        callbacks=[best_model_saver],
         accelerator="gpu",
         precision="16-mixed",
         devices=devices,
         logger=wandb_logger,
-        use_distributed_sampler=True,
+        use_distributed_sampler=False,
         log_every_n_steps=20,
     )
     trainer.fit(model, data_module, ckpt_path=resume_checkpoint)
@@ -417,7 +404,20 @@ def main(config: TransformerConfig):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_file", type=str, help="Path to the yaml config file")
+    parser.add_argument(
+        "--fix_heavier_object_across_sequences",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--use_sp_pretrained_model",
+        action="store_true",
+    )
     args = parser.parse_args()
-    config = load_config(args.config_file, logger)
+    pt_name = "ntp"
+    if args.use_sp_pretrained_model:
+        pt_name = "sp"
+    config_file = f"{pt_name}_pt_force_transfer_var_pos_config"
+    if args.fix_heavier_object_across_sequences:
+        config_file = f"{pt_name}_pt_force_transfer_fixed_pos_config" 
+    config = load_config(config_file, logger)
     main(config)

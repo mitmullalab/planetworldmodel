@@ -56,60 +56,110 @@ def setup_model(
     return model
 
 
-def evaluate_ntp_loss(model: TransformerRegressor, data: np.ndarray, device: torch.device) -> float:
-    """Evaluate the Next-Token Prediction (NTP) loss on the given data.
+def compute_multi_step_error(model, sequence, device, steps):
+    """Compute multi-step prediction error.
+
+    Args:
+        model: The TransformerRegressor model.
+        sequence: A single sequence of shape (sequence_length, feature_dim).
+        device: The device to perform computations on.
+        steps: Number of steps to predict ahead.
+
+    Returns:
+        The average multi-step prediction error for the sequence.
+    """
+    total_error = 0.0
+    num_predictions = len(sequence) - steps
+
+    for i in range(num_predictions):
+        input_tensor = torch.tensor(sequence[i:i+1], dtype=torch.float32).unsqueeze(0).to(device)
+        target = sequence[i+steps]
+
+        with torch.no_grad():
+            for _ in range(steps):
+                output = model(input_tensor)
+                next_step = output[0, -1, :].cpu().numpy()
+                input_tensor = torch.cat([input_tensor, torch.tensor(next_step).unsqueeze(0).unsqueeze(0).to(device)], dim=1)
+
+        prediction = input_tensor[0, -1, :].cpu().numpy()
+        error = np.sqrt(np.mean((prediction - target) ** 2))
+        total_error += error
+
+    return total_error / num_predictions
+
+
+def evaluate_model_performance(model, data, device, steps_ahead=(1, 2, 5, 10)):
+    """Evaluate the model's performance using multi-step predictions for specified steps ahead.
 
     Args:
         model: The TransformerRegressor model.
         data: The validation data of shape (num_sequences, sequence_length, feature_dim).
         device: The device to perform computations on.
+        steps_ahead: Tuple of step sizes to evaluate.
 
     Returns:
-        The average NTP loss across all sequences.
+        A dictionary containing the computed metrics.
     """
     model.eval()
-    total_loss = 0.0
-    num_sequences = len(data)
+    metrics = {f"{step}_step_error": [] for step in steps_ahead}
+    num_sequences, seq_length, feature_dim = data.shape
 
     with torch.no_grad():
-        for sequence in tqdm.tqdm(data, desc="Evaluating NTP loss"):
-            input_tensor = torch.tensor(sequence[:-1], dtype=torch.float32).unsqueeze(0).to(device)
-            target_tensor = torch.tensor(sequence[1:], dtype=torch.float32).unsqueeze(0).to(device)
+        for sequence in tqdm.tqdm(data, desc="Evaluating model performance"):
+            sequence_tensor = torch.tensor(sequence, dtype=torch.float32).unsqueeze(0).to(device)
+            
+            for t in range(seq_length - max(steps_ahead)):
+                input_tensor = sequence_tensor[:, :t+1, :]
+                
+                # Generate predictions for all steps ahead
+                predictions = []
+                for _ in range(max(steps_ahead)):
+                    output = model(input_tensor)
+                    next_pred = output[:, -1:, :]
+                    predictions.append(next_pred)
+                    input_tensor = torch.cat([input_tensor, next_pred], dim=1)
+                
+                predictions = torch.cat(predictions, dim=1)
+                
+                # Compute errors for specified steps
+                for step in steps_ahead:
+                    pred = predictions[:, step-1, :]
+                    target = sequence_tensor[:, t+step, :]
+                    error = torch.sqrt(torch.mean((pred - target) ** 2))
+                    metrics[f"{step}_step_error"].append(error.item())
 
-            output = model(input_tensor)
-            loss = torch.sqrt(torch.nn.functional.mse_loss(output, target_tensor))
-            total_loss += loss.item()
+    # Compute average metrics
+    for key in metrics:
+        metrics[key] = np.mean(metrics[key])
 
-    average_loss = total_loss / num_sequences
-    return average_loss
+    return metrics
 
 
-def evaluate_baseline_ntp_loss(data: np.ndarray) -> float:
-    """Evaluate the baseline Next-Token Prediction (NTP) loss on the given data.
-    The baseline predicts the next token to be the same as the current token.
+def evaluate_baseline_performance(data, steps_ahead=(1, 2, 5, 10)):
+    """Evaluate the baseline model's performance using various metrics for specified steps ahead.
 
     Args:
         data: The validation data of shape (num_sequences, sequence_length, feature_dim).
+        steps_ahead: Tuple of step sizes to evaluate.
 
     Returns:
-        The average baseline NTP loss across all sequences.
+        A dictionary containing the computed metrics for the baseline.
     """
-    total_loss = 0.0
-    num_sequences = len(data)
+    metrics = {f"{step}_step_error": 0.0 for step in steps_ahead}
+    num_sequences, seq_length, feature_dim = data.shape
 
-    for sequence in tqdm.tqdm(data, desc="Evaluating baseline NTP loss"):
-        input_sequence = sequence[:-1]
-        target_sequence = sequence[1:]
-        
-        # Predict next token to be the same as the current token
-        predicted_sequence = input_sequence
-        
-        # Compute RMSE loss
-        loss = np.sqrt(np.mean((predicted_sequence - target_sequence) ** 2))
-        total_loss += loss
+    for sequence in tqdm.tqdm(data, desc="Evaluating baseline performance"):
+        for step in steps_ahead:
+            predictions = sequence[:-step]
+            targets = sequence[step:]
+            error = np.sqrt(np.mean((predictions - targets) ** 2))
+            metrics[f"{step}_step_error"] += error
 
-    average_loss = total_loss / num_sequences
-    return average_loss
+    # Average the metrics
+    for key in metrics:
+        metrics[key] /= num_sequences
+
+    return metrics
 
 
 def complete_sequence(
@@ -204,41 +254,31 @@ def main(args):
     logger.info("Model loaded and ready for generation.")
     
     # Evaluate NTP loss on the validation set
-    # Random subset of 1,000 sequences
-    idx = rng.choice(len(traj_light_full), 1_000, replace=False)
+    # Random subset of 100 sequences
+    idx = rng.choice(len(traj_light_full), 100, replace=False)
     traj_light_full = traj_light_full[idx]
-    ntp_loss = evaluate_ntp_loss(model, traj_light_full, device)
-    logger.info(f"NTP loss on validation set: {ntp_loss}")
     
-    # Evaluate baseline NTP loss
-    baseline_ntp_loss = evaluate_baseline_ntp_loss(traj_light_full)
-    logger.info(f"Baseline NTP loss on validation set: {baseline_ntp_loss}")
-
-    # Generate and store model predictions
-    for i, (tl, th) in tqdm.tqdm(enumerate(zip(traj_light, traj_heavy)), total=args.num_sequences):
-        np.save(GEN_DATA_DIR / f"traj_light_full_{i+1}.npy", tl)
-        np.save(GEN_DATA_DIR / f"traj_heavy_{i+1}.npy", th)
-        partial_traj_light = tl[: args.num_observed]
-        # Generate the completed sequence
-        completed_sequence = complete_sequence(
-            model=model,
-            input_sequence=partial_traj_light,
-            desired_length=len(tl),
-            device=device,
-        )
-        complete_tf_sequence = complete_sequence(
-            model=model,
-            input_sequence=partial_traj_light,
-            desired_length=len(tl),
-            device=device,
-            teacher_forcing=True,
-            ground_truth=tl,
-        )
-        np.save(GEN_DATA_DIR / f"traj_light_partial_{i+1}.npy", partial_traj_light)
-        np.save(GEN_DATA_DIR / f"traj_light_predicted_{i+1}.npy", completed_sequence)
-        np.save(
-            GEN_DATA_DIR / f"traj_light_predicted_tf_{i+1}.npy", complete_tf_sequence
-        )
+    # Evaluate baseline performance
+    baseline_metrics = evaluate_baseline_performance(traj_light_full)
+    logger.info("Baseline performance:")
+    for key, value in baseline_metrics.items():
+        logger.info(f"{key}: {value}")
+    # Save
+    np.save(GEN_DATA_DIR / "baseline_metrics.npy", baseline_metrics)
+    with open(GEN_DATA_DIR / "baseline_metrics.txt", "w") as f:
+        for key, value in baseline_metrics.items():
+            f.write(f"{key}: {value}\n")
+    
+    # Evaluate model performance
+    model_metrics = evaluate_model_performance(model, traj_light_full, device)
+    logger.info("Model performance:")
+    for key, value in model_metrics.items():
+        logger.info(f"{key}: {value}")
+    # Save
+    np.save(GEN_DATA_DIR / "model_metrics.npy", model_metrics)
+    with open(GEN_DATA_DIR / "model_metrics.txt", "w") as f:
+        for key, value in model_metrics.items():
+            f.write(f"{key}: {value}\n")
 
 
 if __name__ == "__main__":

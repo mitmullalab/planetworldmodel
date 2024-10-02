@@ -11,11 +11,6 @@ from planetworldmodel import (
 from planetworldmodel.setting import DATA_DIR
 
 
-def signed_log(x):
-    """Compute the signed log of x."""
-    return np.sign(x) * np.log1p(np.abs(x))
-
-
 def generate_data(
     num_points: int,
     num_trajectories_per_eccentricity: int,
@@ -28,6 +23,7 @@ def generate_data(
     pbar = tqdm.tqdm(total=len(eccentricities) * num_trajectories_per_eccentricity)
     traj_min, traj_max = np.inf, -np.inf
     obs_ls, state_ls = [], []
+    print(f"seed: {seed}")
     for e in eccentricities:
         for _ in range(num_trajectories_per_eccentricity):
             curr_state = []
@@ -44,21 +40,23 @@ def generate_data(
                 num_points = len(traj_light)
                 traj_heavy = np.tile(state_dict["trajectory_heavy"], (num_points, 1))
                 v_relative = np.array(state_dict["relative_velocity"])
-                log_m_light = np.tile(np.log(state_dict["m_light"]), (num_points, 1))
-                log_m_heavy = np.tile(np.log(state_dict["m_heavy"]), (num_points, 1))
-                log_energy = np.tile(signed_log(state_dict["energy"]), (num_points, 1))
-                log_angular_momentum = np.tile(
-                    signed_log(state_dict["angular_momentum"]), (num_points, 1)
+                m_light = np.tile(state_dict["m_light"], (num_points, 1))
+                m_heavy = np.tile(state_dict["m_heavy"], (num_points, 1))
+                energy = np.tile(state_dict["energy"], (num_points, 1))
+                angular_momentum = np.tile(
+                    state_dict["angular_momentum"], (num_points, 1)
                 )
+                center_of_mass = np.array(state_dict["center_of_mass"])
                 curr_state = np.concatenate(
                     [
                         traj_light,
                         traj_heavy,
                         v_relative,
-                        log_m_light,
-                        log_m_heavy,
-                        log_energy,
-                        log_angular_momentum,
+                        m_light,
+                        m_heavy,
+                        energy,
+                        angular_momentum,
+                        center_of_mass,
                     ],
                     axis=1,
                 )
@@ -82,17 +80,26 @@ def generate_data(
 
 
 def main(args):
-    seed = 0
-    obs_tr, state_tr, seed = generate_data(
-        args.num_points,
-        args.num_train_trajectories_per_eccentricity,
-        args.eccentricities,
-        args.dt,
-        args.obs_variance,
-        args.fix_heavier_object,
-        seed,
-    )
-    obs_val, state_val, _ = generate_data(
+    seed = int(args.iteration * 5e7)
+    # obs_tr, state_tr, seed = generate_data(
+    #     args.num_points,
+    #     args.num_train_trajectories_per_eccentricity,
+    #     args.eccentricities,
+    #     args.dt,
+    #     args.obs_variance,
+    #     args.fix_heavier_object,
+    #     seed,
+    # )
+    # obs_val, state_val, _ = generate_data(
+    #     args.num_points,
+    #     args.num_val_trajectories_per_eccentricity,
+    #     args.eccentricities,
+    #     args.dt,
+    #     args.obs_variance,
+    #     args.fix_heavier_object,
+    #     seed,
+    # )
+    obs_test, state_test, _ = generate_data(
         args.num_points,
         args.num_val_trajectories_per_eccentricity,
         args.eccentricities,
@@ -101,18 +108,24 @@ def main(args):
         args.fix_heavier_object,
         seed,
     )
+    
 
     # Save as a numpy file
-    data_dir = DATA_DIR / f"obs_var_{args.obs_variance:.5f}"
+    # data_dir = DATA_DIR / f"obs_var_{args.obs_variance:.5f}"
+    # data_dir = DATA_DIR / "transfer_data"
+    data_dir = DATA_DIR / "two_body"
     data_dir.mkdir(parents=True, exist_ok=True)
     if args.fix_heavier_object:
-        np.save(data_dir / "obs_train_heavier_fixed.npy", obs_tr)
-        np.save(data_dir / "obs_val_heavier_fixed.npy", obs_val)
-        np.save(data_dir / "state_train_heavier_fixed.npy", state_tr)
-        np.save(data_dir / "state_val_heavier_fixed.npy", state_val)
+        # np.save(data_dir / f"obs_train_heavier_fixed_{args.iteration}.npy", obs_tr)
+        # np.save(data_dir / f"obs_val_heavier_fixed.npy", obs_val)
+        # np.save(data_dir / f"state_train_heavier_fixed_{args.iteration}.npy", state_tr)
+        # np.save(data_dir / f"state_val_heavier_fixed.npy", state_val)
+        np.save(data_dir / f"obs_test_heavier_fixed.npy", obs_test)
+        np.save(data_dir / f"state_test_heavier_fixed.npy", state_test)
     else:
-        np.save(data_dir / "two_body_problem_train.npy", np.array(obs_tr))
-        np.save(data_dir / "two_body_problem_val.npy", np.array(obs_val))
+        ...
+        # np.save(data_dir / f"two_body_problem_train_{args.iteration}.npy", np.array(obs_tr))
+        # np.save(data_dir / f"two_body_problem_val_{args.iteration}.npy", np.array(obs_val))
 
 
 if __name__ == "__main__":
@@ -122,19 +135,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_points",
         type=int,
-        default=1_000,
+        default=200,
         help="Number of points to generate along the orbit.",
     )
     parser.add_argument(
         "--num_train_trajectories_per_eccentricity",
         type=int,
-        default=10,
+        default=10_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(
         "--num_val_trajectories_per_eccentricity",
         type=int,
-        default=10,
+        default=1_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(
@@ -146,7 +159,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dt",
         type=float,
-        default=10,  # 10 seconds
+        default=300,  # 5 minutes
         help="Time step in seconds between each point.",
     )
     parser.add_argument(
@@ -159,6 +172,11 @@ if __name__ == "__main__":
         "--fix_heavier_object",
         action="store_true",
         help="Fix the heavier object at some random coordinate.",
+    )
+    parser.add_argument(
+        "--iteration",
+        type=int,
+        default=1,
     )
 
     args = parser.parse_args()

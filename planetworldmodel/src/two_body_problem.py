@@ -54,6 +54,9 @@ class TrajectoryState(BaseModel):
     eccentricity: float_type
     energy: float_type
     angular_momentum: float_type
+    force_vector: list
+    acceleration_vector: list
+    center_of_mass: list  # New field for center of mass
 
 
 def is_nearly_parabolic(e: float_type) -> bool:
@@ -62,7 +65,8 @@ def is_nearly_parabolic(e: float_type) -> bool:
 
 
 def random_two_body_problem(
-    target_eccentricity: float_type, seed: int = 0, g_constant: float_type = 6.67430e-11
+    target_eccentricity: float_type, seed: int = 0, g_constant: float_type = 6.67430e-11,
+    unit_light_mass: bool = False,
 ) -> TwoBodyProblem:
     """
     Generate a random TwoBodyProblem instance with a specified target eccentricity.
@@ -78,12 +82,15 @@ def random_two_body_problem(
     rng = np.random.default_rng(seed)
 
     # Generate random masses (1e2 to 1e5 kg, log-uniform)
-    mass_1 = 10 ** rng.uniform(2, 5)
-    mass_2 = 10 ** rng.uniform(2, 5)
+    mass_1 = 10 ** rng.uniform(2, 4)
+    mass_2 = 10 ** rng.uniform(4, 5)
+    if unit_light_mass:
+        mass_1 = 1.0
+        mass_2 = rng.uniform(1_000, 10_000)  # 1k kg to 10k kg
     mass_tot = mass_1 + mass_2
     mu = g_constant * mass_tot
 
-    # Generate random initial position (1 to 10 m, uniform)
+    # Generate random initial position (1 to 5 m, uniform)
     r_0_magnitude = rng.uniform(1, 10)
     r_0_angle = rng.uniform(0, 2 * np.pi)
 
@@ -361,10 +368,11 @@ def generate_trajectories(
     return orbit_1, orbit_2, vel_1, vel_2, e
 
 
-def compute_relative_orbit(
+def compute_orbit_in_new_frame(
     heavier_orbit: np.ndarray, lighter_orbit: np.ndarray, heavier_coord: np.ndarray
 ) -> np.ndarray:
-    """Compute the lighter object's orbit relative to the fixed heavier object.
+    """Compute the lighter object's in a new reference frame where the heavier
+    object is fixed at heavier_coord.
 
     Args:
         heavier_orbit: The original orbit of the heavier object
@@ -378,17 +386,18 @@ def compute_relative_orbit(
     offset = heavier_orbit - heavier_coord
 
     # Adjust the lighter object's orbit by subtracting this offset
-    relative_lighter_orbit = lighter_orbit - offset
-    return relative_lighter_orbit
+    new_lighter_orbit = lighter_orbit - offset
+    return new_lighter_orbit
 
 
 def generate_trajectory_with_heavier_fixed(
     problem: TwoBodyProblem,
     num_points: int = 1_000,
-    dt: float_type = 10,  # 10 second
+    dt: float_type = 30,  # 30 seconds
     obs_variance: float_type = 0.0,
     two_dimensional: bool = True,
     rng: int | Generator = 0,
+    heavier_coord: np.ndarray | None = None,
 ) -> tuple[TrajectoryObservation, TrajectoryState]:
     """Generate a trajectory with the heavier object fixed at some random coordinate.
 
@@ -399,6 +408,8 @@ def generate_trajectory_with_heavier_fixed(
         obs_variance: Variance of the observation noise.
         two_dimensional: Whether to omit the z-coordinates in the output.
         rng: Random number generator or seed.
+        heavier_coord: Fixed coordinates of the heavier object. If None, a random
+            coordinate is chosen.
 
     Returns:
         Tuple of the fixed coordinates of the heavier object, the relative orbit
@@ -422,10 +433,11 @@ def generate_trajectory_with_heavier_fixed(
         vel_heavy, vel_light = vel_2, vel_1
 
     # Randomly sample the heavier object's coordinates
-    heavier_coord = rng.choice(heavier_orbit, size=1, axis=0).squeeze()
+    heavier_coord = heavier_coord if heavier_coord is not None \
+        else rng.choice(heavier_orbit, size=1, axis=0).squeeze()
 
     # Compute the lighter object's relative trajectory
-    relative_lighter_orbit = compute_relative_orbit(
+    new_lighter_orbit = compute_orbit_in_new_frame(
         heavier_orbit, lighter_orbit, heavier_coord
     )
     heavier_orbit = np.repeat(heavier_coord[np.newaxis, :], num_points, axis=0)
@@ -436,37 +448,52 @@ def generate_trajectory_with_heavier_fixed(
     # Calculate total mass and reduced mass
     total_mass = problem.mass_1 + problem.mass_2
     reduced_mass = (problem.mass_1 * problem.mass_2) / total_mass
+    
+    # Calculate the correct relative position vector
+    relative_position = new_lighter_orbit - heavier_coord
+    
+    # Calculate force vector using the correct relative position
+    r = np.linalg.norm(relative_position, axis=1)
+    force_magnitude = problem.gravitational_constant * mass_heavy * mass_light / (r**2)
+    force_direction = -relative_position / r[:, np.newaxis]
+    force_vector = force_magnitude[:, np.newaxis] * force_direction
+    
+    # Calculate acceleration vector of the lighter object
+    acceleration_magnitude = force_magnitude / mass_light
+    acceleration_vector = acceleration_magnitude[:, np.newaxis] * force_direction
 
     # Calculate energy
     kinetic_energy = 0.5 * reduced_mass * np.sum(relative_velocity**2, axis=1)
-    potential_energy = (
-        -problem.gravitational_constant
-        * total_mass
-        * reduced_mass
-        / np.linalg.norm(relative_lighter_orbit, axis=1)
-    )
-    energy = kinetic_energy + potential_energy
+    potential_energy = -problem.gravitational_constant * mass_heavy * mass_light / r
+    total_energy = kinetic_energy + potential_energy
 
-    # Calculate angular momentum
-    r_cross_v = np.cross(relative_lighter_orbit, relative_velocity)
+    # Calculate angular momentum magnitude
+    r_cross_v = np.cross(relative_position, relative_velocity)
     angular_momentum = reduced_mass * r_cross_v
+    
+    # Calculate the center of mass
+    heavier_tile = np.tile(heavier_coord, (num_points, 1))
+    center_of_mass = (mass_heavy * heavier_tile + mass_light * new_lighter_orbit) / total_mass
 
     # Create TrajectoryObservation instance
     trajectory_observation = TrajectoryObservation(
-        trajectory1=relative_lighter_orbit.tolist(),
+        trajectory1=new_lighter_orbit.tolist(),
     )
 
     # Create TrajectoryState instance
     trajectory_state = TrajectoryState(
-        trajectory_light=relative_lighter_orbit.tolist(),
+        trajectory_light=new_lighter_orbit.tolist(),
         trajectory_heavy=heavier_coord,
         relative_velocity=relative_velocity.tolist(),
         m_light=mass_light,
         m_heavy=mass_heavy,
         G=problem.gravitational_constant,
         eccentricity=e,
-        energy=np.mean(energy),
+        energy=np.mean(total_energy),
         angular_momentum=np.mean(angular_momentum),
+        force_vector=force_vector.tolist(),
+        acceleration_vector=acceleration_vector.tolist(),
+        center_of_mass=center_of_mass.tolist(),
     )
 
     return trajectory_observation, trajectory_state
