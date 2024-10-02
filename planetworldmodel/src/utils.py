@@ -20,7 +20,10 @@ class TransformerConfig(BaseModel):
     learning_rate: float
     max_epochs: int
     observation_variance: float
-    prediction_target: Literal["next_obs", "state", "function_of_state", "mass", "noise", "force_fixed_pos", "force_var_pos"]
+    prediction_target: Literal[
+        "next_obs", "state", "function_of_state", "mass", "noise", 
+        "force_fixed_pos", "force_var_pos", "accel_fixed_pos", "accel_var_pos"
+    ]
     pretrained_ckpt_dir: str | None = Field(
         None,
         description="Path to the pretrained checkpoint to load, if exists."

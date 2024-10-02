@@ -56,6 +56,7 @@ class TrajectoryState(BaseModel):
     angular_momentum: float_type
     force_vector: list
     acceleration_vector: list
+    center_of_mass: list  # New field for center of mass
 
 
 def is_nearly_parabolic(e: float_type) -> bool:
@@ -64,7 +65,8 @@ def is_nearly_parabolic(e: float_type) -> bool:
 
 
 def random_two_body_problem(
-    target_eccentricity: float_type, seed: int = 0, g_constant: float_type = 6.67430e-11
+    target_eccentricity: float_type, seed: int = 0, g_constant: float_type = 6.67430e-11,
+    unit_light_mass: bool = False,
 ) -> TwoBodyProblem:
     """
     Generate a random TwoBodyProblem instance with a specified target eccentricity.
@@ -80,13 +82,16 @@ def random_two_body_problem(
     rng = np.random.default_rng(seed)
 
     # Generate random masses (1e2 to 1e5 kg, log-uniform)
-    mass_1 = 10 ** rng.uniform(2, 5)
-    mass_2 = 10 ** rng.uniform(2, 5)
+    mass_1 = 10 ** rng.uniform(2, 4)
+    mass_2 = 10 ** rng.uniform(4, 5)
+    if unit_light_mass:
+        mass_1 = 1.0
+        mass_2 = rng.uniform(1_000, 10_000)  # 1k kg to 10k kg
     mass_tot = mass_1 + mass_2
     mu = g_constant * mass_tot
 
     # Generate random initial position (1 to 5 m, uniform)
-    r_0_magnitude = rng.uniform(1, 5)
+    r_0_magnitude = rng.uniform(1, 10)
     r_0_angle = rng.uniform(0, 2 * np.pi)
 
     # Calculate semi-major axis and velocity magnitude
@@ -388,7 +393,7 @@ def compute_orbit_in_new_frame(
 def generate_trajectory_with_heavier_fixed(
     problem: TwoBodyProblem,
     num_points: int = 1_000,
-    dt: float_type = 10,  # 10 second
+    dt: float_type = 30,  # 30 seconds
     obs_variance: float_type = 0.0,
     two_dimensional: bool = True,
     rng: int | Generator = 0,
@@ -465,6 +470,10 @@ def generate_trajectory_with_heavier_fixed(
     # Calculate angular momentum magnitude
     r_cross_v = np.cross(relative_position, relative_velocity)
     angular_momentum = reduced_mass * r_cross_v
+    
+    # Calculate the center of mass
+    heavier_tile = np.tile(heavier_coord, (num_points, 1))
+    center_of_mass = (mass_heavy * heavier_tile + mass_light * new_lighter_orbit) / total_mass
 
     # Create TrajectoryObservation instance
     trajectory_observation = TrajectoryObservation(
@@ -484,6 +493,7 @@ def generate_trajectory_with_heavier_fixed(
         angular_momentum=np.mean(angular_momentum),
         force_vector=force_vector.tolist(),
         acceleration_vector=acceleration_vector.tolist(),
+        center_of_mass=center_of_mass.tolist(),
     )
 
     return trajectory_observation, trajectory_state
