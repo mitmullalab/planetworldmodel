@@ -6,6 +6,7 @@ from typing import Literal
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.accelerators import find_usable_cuda_devices
@@ -280,9 +281,17 @@ class TransformerRegressor(LightningModule):
         return loss
 
     def configure_optimizers(self):
-        print(f"learning_rate: {self.learning_rate}")
+        print(f"Initial learning_rate: {self.learning_rate}")
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        return optimizer
+        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss",
+                "frequency": 1
+            },
+        }
 
 
 def load_model(
@@ -341,12 +350,14 @@ def load_model(
 def main(config: TransformerConfig):
     torch.set_float32_matmul_precision("medium")
     devices = find_usable_cuda_devices()
+    print(f"Devices: {devices}")
     num_devices = len(devices)
     wandb_logger = setup_wandb(config)
 
     # Instantiate the data module
     batch_size = config.batch_size_per_device * num_devices
-    data_dir = DATA_DIR / f"obs_var_{config.observation_variance:.5f}"
+    # data_dir = DATA_DIR / f"obs_var_{config.observation_variance:.5f}"
+    data_dir = DATA_DIR / f"two_body_problem"
     data_module = SequenceDataModule(
         data_dir=data_dir,
         batch_size=batch_size,
@@ -367,26 +378,38 @@ def main(config: TransformerConfig):
     # Set up new checkpoint directory
     ckpt_name = config.new_ckpt_dir or config.name
     ckpt_dir = CKPT_DIR / ckpt_name
-    best_checkpoint = ckpt_dir / "best.ckpt"
-    resume_checkpoint = best_checkpoint if best_checkpoint.exists() else None
+    # best_checkpoint = ckpt_dir / "best.ckpt"
+    # resume_checkpoint = best_checkpoint if best_checkpoint.exists() else None
+    last_checkpoint = ckpt_dir / "last.ckpt"
+    resume_checkpoint = last_checkpoint if last_checkpoint.exists() else None
+    
+    # Modified checkpoint callback configuration
     checkpoint_callback = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        filename="epoch_{epoch:02d}",  # This will create checkpoints like "epoch_01.ckpt", "epoch_02.ckpt", etc.
+        save_top_k=-1,  # Save all checkpoints
+        every_n_epochs=20,  # Save a checkpoint every epoch
+        save_last=True,  # Still save the last checkpoint
+    )
+
+    # Additional checkpoint callback for saving the best model
+    best_model_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
         filename="best",
         monitor="val_loss",
         mode="min",
         save_top_k=1,
-        save_last=True,
     )
 
     # Set up trainer and fit the model
     trainer = Trainer(
         max_epochs=config.max_epochs,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, best_model_callback],  # Add both callbacks
         accelerator="gpu",
         precision="16-mixed",
         devices=devices,
         logger=wandb_logger,
-        use_distributed_sampler=False,
+        use_distributed_sampler=True,
         log_every_n_steps=20,
     )
     trainer.fit(model, data_module, ckpt_path=resume_checkpoint)

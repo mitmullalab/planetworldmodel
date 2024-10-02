@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningModule, LightningDataModule, Trainer
 from pytorch_lightning.accelerators import find_usable_cuda_devices
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from planetworldmodel import TransformerConfig, load_config, setup_wandb
 from planetworldmodel.setting import CKPT_DIR, DATA_DIR, GEN_DATA_DIR
@@ -19,35 +19,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class NoisePredictionDataset(Dataset):
-    def __init__(
-        self, 
-        input_file_path: Path, 
-        target_file_path: Path, 
-        index_file_path: Path,
-        num_data_points: int = 500,
-        seed: int = 0,
-    ):
+class AccelPredictionDataset(Dataset):
+    def __init__(self, input_file_path: Path, target_file_path: Path):
         inputs = np.load(input_file_path)
-        targets = np.load(target_file_path)
-        indx = np.load(index_file_path)
-        
-        # # Extract each element corresponding to the indx
-        # inputs = inputs[row_indices, indx]
-        # targets = targets[row_indices, indx]
-        
-        # Extract random num_datapoints
-        rng = np.random.default_rng(seed)
-        rand_ints = rng.choice(len(inputs), num_data_points, replace=False)
-        
-        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
-        self.input_states = torch.tensor(inputs[rand_ints], dtype=torch.float32)
+        targets = np.atleast_3d(np.load(target_file_path))
 
-        # Target noise vector: (num_data, seq_len, 1)
-        self.target_states = torch.tensor(targets[rand_ints], dtype=torch.float32)
-        
-        # Index of the target state in the input state
-        self.index = torch.tensor(indx[rand_ints], dtype=torch.int64)
+        # Input state: lighter trajectory (num_data, seq_len, feature_dim)
+        self.input_states = torch.tensor(inputs, dtype=torch.float32)
+
+        # Target acceleration vector: (num_data, seq_len, feature_dim)
+        self.target_states = torch.tensor(targets, dtype=torch.float32)
+        print(f"test target: {targets.min():.2f} to {targets.max():.2f} with shape {targets.shape}")
 
     def __len__(self) -> int:
         return len(self.input_states)
@@ -56,46 +38,44 @@ class NoisePredictionDataset(Dataset):
         return {
             "input_sequence": self.input_states[idx],
             "target_sequence": self.target_states[idx],
-            "index": self.index[idx],
         }
 
 
-class SequenceNoiseDataModule(LightningDataModule):
+class SequenceAccelDataModule(LightningDataModule):
     def __init__(
         self,
         data_dir: Path,
         batch_size: int = 32,
         num_workers: int = 4,
-        seed: int = 0,
-        num_data_points: int = 500,
+        prediction_target: Literal[
+            "accel_fixed_pos", "accel_var_pos"
+        ] = "accel_fixed_pos",
     ):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
         self.num_workers = num_workers
-        train_file = "obs_train_heavier_fixed.npy"
-        train_target_file = "noise_train_heavier_fixed.npy"
-        train_idx_file = "indx_train_heavier_fixed.npy"
-        val_file = "obs_val_heavier_fixed.npy"
-        val_target_file = "noise_val_heavier_fixed.npy"
-        val_idx_file = "indx_val_heavier_fixed.npy"
+        if prediction_target == "accel_fixed_pos":
+            train_file = "obs_train_heavier_fixed.npy"
+            train_target_file = "accel_train_heavier_fixed.npy"
+            val_file = "obs_val_heavier_fixed.npy"
+            val_target_file = "accel_val_heavier_fixed.npy"
+        else:
+            train_file = "obs_train.npy"
+            train_target_file = "accel_train.npy"
+            val_file = "obs_val.npy"
+            val_target_file = "accel_val.npy"
         self.train_file = self.data_dir / train_file
         self.train_target_file = self.data_dir / train_target_file
-        self.train_idx_file = self.data_dir / train_idx_file
         self.val_file = self.data_dir / val_file
         self.val_target_file = self.data_dir / val_target_file
-        self.val_idx_file = self.data_dir / val_idx_file
-        self.seed = seed
-        self.num_data_points = num_data_points
 
     def setup(self, stage=None):
-        self.train = NoisePredictionDataset(
-            self.train_file, self.train_target_file, self.train_idx_file, seed=self.seed,
-            num_data_points=self.num_data_points
+        self.train = AccelPredictionDataset(
+            self.train_file, self.train_target_file
         )
-        self.val = NoisePredictionDataset(
-            self.val_file, self.val_target_file, self.val_idx_file, seed=self.seed,
-            num_data_points=self.num_data_points
+        self.val = AccelPredictionDataset(
+            self.val_file, self.val_target_file
         )
 
     def train_dataloader(self):
@@ -176,7 +156,6 @@ class TransformerRegressor(LightningModule):
         self.inputs: list = []
         self.predictions: list = []
         self.targets: list = []
-        self.output_dim = output_dim
 
     def forward(self, x):
         x = self.embedding(x)  # (batch_size, seq_len, dim_embedding)
@@ -189,19 +168,13 @@ class TransformerRegressor(LightningModule):
         # memory is None because we are not using encoder
         x = self.transformer(x, mask=mask)
         x = x.permute(1, 0, 2)  # (batch_size, seq_len, dim_embedding)  # noqa: FURB184
-        x = self.regressor(x)
-        return x[..., :self.output_dim]
+        return self.regressor(x)
 
     def training_step(self, batch, batch_idx):
         input_sequence = batch["input_sequence"]
         target_sequence = batch["target_sequence"]
-        indx = batch["index"]
-        # print(f"input_seq: {input_sequence.shape}, target_seq: {target_sequence.shape}, indx: {indx.shape}")
         predictions = self(input_sequence)
-        extracted_pred = predictions[torch.arange(predictions.size(0)), indx]
-        extracted_target = target_sequence[torch.arange(target_sequence.size(0)), indx]
-        # print(f"new_pred: {extracted_pred.shape}, new_target: {extracted_target.shape}")
-        loss = torch.sqrt(nn.MSELoss()(extracted_pred, extracted_target))
+        loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
         self.log("train_loss", loss, prog_bar=True, logger=True)
         if self.store_predictions:
             self.predictions.append(predictions.detach().cpu().numpy())
@@ -209,15 +182,50 @@ class TransformerRegressor(LightningModule):
             self.targets.append(target_sequence.detach().cpu().numpy())
         return loss
 
+    def on_train_epoch_end(self):
+        if not self.store_predictions:
+            return
+
+        epoch_predictions = np.array(self.predictions, dtype=object)
+        epoch_inputs = np.array(self.inputs, dtype=object)
+        epoch_targets = np.array(self.targets, dtype=object)
+
+        # Save predictions and inputs
+        if self.prediction_path:
+            prediction_path = GEN_DATA_DIR / self.prediction_path
+        else:
+            prediction_path = GEN_DATA_DIR / "predictions"
+        prediction_path.mkdir(exist_ok=True, parents=True)
+        np.save(
+            prediction_path / f"predictions_epoch_{self.current_epoch}.npy",
+            epoch_predictions,
+        )
+        np.save(
+            prediction_path / f"inputs_epoch_{self.current_epoch}.npy", epoch_inputs
+        )
+        np.save(
+            prediction_path / f"targets_epoch_{self.current_epoch}.npy", epoch_targets
+        )
+
+        # Clear for next epoch
+        self.predictions = []
+        self.inputs = []
+        self.targets = []
+
     def validation_step(self, batch, batch_idx):
         input_sequence = batch["input_sequence"]
         target_sequence = batch["target_sequence"]
-        indx = batch["index"]
         predictions = self(input_sequence)
-        extracted_pred = predictions[torch.arange(predictions.size(0)), indx]
-        extracted_target = target_sequence[torch.arange(target_sequence.size(0)), indx]
-        loss = torch.sqrt(nn.MSELoss()(extracted_pred, extracted_target))
+        loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        input_sequence = batch["input_sequence"]
+        target_sequence = batch["target_sequence"]
+        predictions = self(input_sequence)
+        loss = torch.sqrt(nn.MSELoss()(predictions, target_sequence))
+        self.log("test_loss", loss, prog_bar=True, sync_dist=True)
         return loss
 
     def configure_optimizers(self):
@@ -225,11 +233,56 @@ class TransformerRegressor(LightningModule):
         return optimizer
 
 
+class BestModelPredictionSaver(ModelCheckpoint):
+    def __init__(self, dirpath, filename, test_dataloader):
+        super().__init__(dirpath=dirpath, filename=filename, save_top_k=1, monitor='val_loss', mode='min')
+        self.test_dataloader = test_dataloader
+        self.best_val_loss = float('inf')
+
+    def on_validation_end(self, trainer, pl_module):
+        super().on_validation_end(trainer, pl_module)
+        current_val_loss = trainer.callback_metrics.get('val_loss')
+        
+        if current_val_loss < self.best_val_loss:
+            self.best_val_loss = current_val_loss
+            self.save_predictions(trainer, pl_module)
+
+    def save_predictions(self, trainer, pl_module):
+        pl_module.eval()
+        inputs = []
+        predictions = []
+        targets = []
+        
+        with torch.no_grad():
+            for batch in self.test_dataloader:
+                input_sequence = batch["input_sequence"].to(pl_module.device)
+                target_sequence = batch["target_sequence"]
+                pred = pl_module(input_sequence)
+                inputs.append(input_sequence.cpu().numpy())
+                predictions.append(pred.cpu().numpy())
+                targets.append(target_sequence.numpy())
+        
+        inputs = np.concatenate(inputs)
+        predictions = np.concatenate(predictions)
+        targets = np.concatenate(targets)
+        
+        print(self.dirpath)
+        print(inputs[-1,:10])
+        print(targets[-1,:10])
+        
+                
+        os.makedirs(self.dirpath, exist_ok=True)
+        np.save(f"{self.dirpath}/best_inputs.npy", inputs)
+        np.save(f"{self.dirpath}/best_predictions.npy", predictions)
+        np.save(f"{self.dirpath}/best_targets.npy", targets)
+        
+        pl_module.train()
+
+
 def load_model(
     config: TransformerConfig,
     feature_dim: int,
     output_dim: int,
-    swap_final_layer: bool = True,
 ) -> TransformerRegressor:
     """Load the model with the pretrained weights, if they exist.
     Otherwise, initialize the model with random weights.
@@ -275,49 +328,11 @@ def load_model(
         )
     # Replace the final regressor layer with a new one matching the new output_dim
     # if output_dim != pretrained_output_dim:
-    if swap_final_layer:
-        model.regressor = nn.Linear(config.dim_embedding, output_dim)
+    model.regressor = nn.Linear(config.dim_embedding, output_dim)
     return model
 
 
-class CustomEpochCheckpoint(Callback):
-    def __init__(self, dirpath, filename_prefix, save_epochs):
-        super().__init__()
-        dirpath.mkdir(parents=True, exist_ok=True)
-        self.dirpath = dirpath
-        self.filename_prefix = filename_prefix
-        self.save_epochs = save_epochs
-        
-    def on_fit_start(self, trainer, pl_module):
-        # Save checkpoint before training starts (epoch 0)
-        self._save_checkpoint(trainer, 0)
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        epoch = trainer.current_epoch
-        if epoch + 1 in self.save_epochs:  # +1 because epochs are 0-indexed
-            filename = f"{self.filename_prefix}_epoch_{epoch+1}.ckpt"
-            ckpt_path = os.path.join(self.dirpath, filename)
-            trainer.save_checkpoint(ckpt_path)
-            print(f"Saved checkpoint for epoch {epoch+1} at {ckpt_path}")
-            
-    def _save_checkpoint(self, trainer, epoch):
-        filename = f"{self.filename_prefix}_epoch_{epoch}.ckpt"
-        ckpt_path = os.path.join(self.dirpath, filename)
-        trainer.save_checkpoint(ckpt_path)
-        print(f"Saved checkpoint for epoch {epoch} at {ckpt_path}")
-
-
-class SaveFinalCheckpoint(Callback):
-    def __init__(self, dirpath, filename):
-        super().__init__()
-        self.dirpath = dirpath
-        self.filename = filename
-
-    def on_train_end(self, trainer, pl_module):
-        trainer.save_checkpoint(os.path.join(self.dirpath, f"{self.filename}.ckpt"))
-
-
-def main(config: TransformerConfig, pretrained: str, num_data_points: int):
+def main(config: TransformerConfig):
     torch.set_float32_matmul_precision("medium")
     devices = find_usable_cuda_devices()
     num_devices = len(devices)
@@ -325,12 +340,28 @@ def main(config: TransformerConfig, pretrained: str, num_data_points: int):
 
     # Instantiate the data module
     batch_size = config.batch_size_per_device * num_devices
-    data_dir = DATA_DIR / f"white_noise_data"
-    data_module = SequenceNoiseDataModule(
+    data_dir = DATA_DIR / f"accelerations"
+    data_module = SequenceAccelDataModule(
         data_dir=data_dir,
         batch_size=batch_size,
-        seed=config.seed,
-        num_data_points=num_data_points,
+        prediction_target=config.prediction_target,
+    )
+    
+    # Create test dataloader
+    if config.prediction_target == "accel_fixed_pos":
+        test_file = "obs_test_heavier_fixed.npy"
+        test_target_file = "accel_test_heavier_fixed.npy"
+    else:
+        test_file = "obs_test.npy"
+        test_target_file = "accel_test.npy"
+    test_data = AccelPredictionDataset(
+        data_dir / test_file, data_dir / test_target_file,
+    )
+    test_dataloader = DataLoader(
+        test_data,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=data_module.num_workers
     )
 
     # Manually call setup to initialize the datasets
@@ -340,62 +371,62 @@ def main(config: TransformerConfig, pretrained: str, num_data_points: int):
     sample = data_module.train[0]
     feature_dim = sample["input_sequence"].shape[-1]
     output_dim = sample["target_sequence"].shape[-1]
-    # print(f"feature_dim: {feature_dim}, output_dim: {output_dim}")
+    print(f"feature_dim: {feature_dim}, output_dim: {output_dim}")
 
     # Load the pretrained model
-    swap_final_layer = True
-    if pretrained == "sp_direct":
-        swap_final_layer = False
-    model = load_model(config, feature_dim, output_dim, swap_final_layer)
+    model = load_model(config, feature_dim, output_dim)
 
     # Set up new checkpoint directory
     ckpt_name = config.new_ckpt_dir or config.name
-    ckpt_dir = CKPT_DIR / ckpt_name / f"data_points_{num_data_points}"
-    # Create custom callback to save final checkpoint
-    # save_final_checkpoint = SaveFinalCheckpoint(dirpath=ckpt_dir, filename="last")
-    custom_epoch_checkpoint = CustomEpochCheckpoint(
+    ckpt_dir = CKPT_DIR / ckpt_name
+    best_checkpoint = ckpt_dir / "best.ckpt"
+    resume_checkpoint = best_checkpoint if best_checkpoint.exists() else None
+    
+    
+    # Modified checkpoint callback configuration
+    checkpoint_callback = ModelCheckpoint(
         dirpath=ckpt_dir,
-        filename_prefix=config.name,
-        save_epochs=[0, 1, 10, 50, 100]
+        filename="epoch_{epoch:02d}",  # This will create checkpoints like "epoch_01.ckpt", "epoch_02.ckpt", etc.
+        every_n_epochs=20,  # Save a checkpoint every epoch
+        save_last=True,  # Still save the last checkpoint
+    )
+    
+    best_model_saver = BestModelPredictionSaver(
+        dirpath=ckpt_dir,
+        filename="best",
+        test_dataloader=test_dataloader
     )
 
     # Set up trainer and fit the model
     trainer = Trainer(
         max_epochs=config.max_epochs,
-        # callbacks=[save_final_checkpoint],
-        callbacks=[custom_epoch_checkpoint],
+        callbacks=[checkpoint_callback, best_model_saver],
         accelerator="gpu",
         precision="16-mixed",
         devices=devices,
         logger=wandb_logger,
         use_distributed_sampler=False,
-        log_every_n_steps=1_000,
-        limit_val_batches=0.0
+        log_every_n_steps=20,
     )
-    trainer.fit(model, data_module)
+    trainer.fit(model, data_module, ckpt_path=resume_checkpoint)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--pretrained",
-        type=str,
-        choices=["sp", "ntp", "sp_direct"],
+        "--fix_heavier_object_across_sequences",
+        action="store_true",
     )
     parser.add_argument(
-        "--model_num",
-        type=int,
-        choices=[1,2,3,4,5,6,7,8,9,10],
-    )
-    parser.add_argument(
-        "--num_data_points",
-        type=int,
+        "--use_sp_pretrained_model",
+        action="store_true",
     )
     args = parser.parse_args()
-    config_file = f"ntp_pt_noise_finetune{args.model_num}_config"
-    if args.pretrained == "sp":
-        config_file = f"sp_pt_noise_finetune{args.model_num}_config"
-    elif args.pretrained == "sp_direct":
-        config_file = f"sp_pt_direct_noise_finetune_config"
+    pt_name = "ntp"
+    if args.use_sp_pretrained_model:
+        pt_name = "sp"
+    config_file = f"{pt_name}_pt_accel_transfer_var_pos_config"
+    if args.fix_heavier_object_across_sequences:
+        config_file = f"{pt_name}_pt_accel_transfer_fixed_pos_config" 
     config = load_config(config_file, logger)
-    main(config, args.pretrained, args.num_data_points)
+    main(config)

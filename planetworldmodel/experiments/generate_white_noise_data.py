@@ -98,7 +98,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_points",
         type=int,
-        default=1_000,
+        default=200,
         help="Number of points to generate along the orbit.",
     )
     parser.add_argument(
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dt",
         type=float,
-        default=10,  # 10 seconds
+        default=300,  # 10 seconds
         help="Time step in seconds between each point.",
     )
     parser.add_argument(

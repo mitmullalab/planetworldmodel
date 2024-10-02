@@ -155,6 +155,7 @@ def load_model(
     config: TransformerConfig,
     feature_dim: int,
     ckpt_filename: str,
+    num_data_points: int,
 ) -> TransformerRegressor:
     """Load the model with the pretrained weights, if they exist.
     Otherwise, initialize the model with random weights.
@@ -180,7 +181,7 @@ def load_model(
         output_dim=1,
     )
     ckpt_name = config.name
-    ckpt_path = CKPT_DIR / ckpt_name / f"{ckpt_filename}.ckpt"
+    ckpt_path = CKPT_DIR / ckpt_name / f"data_points_{num_data_points}" / f"{ckpt_filename}.ckpt"
     if ckpt_path and ckpt_path.exists():
         try:
             checkpoint = torch.load(ckpt_path, weights_only=True)
@@ -202,6 +203,7 @@ def load_model_and_generate_predictions(
     split: Literal["train", "val"],
     model_num: int,
     checkpoint_epoch_num: int,
+    num_data_points: int,
 ):
     devices = [0]  # Use a single GPU
     num_devices = len(devices)
@@ -214,7 +216,7 @@ def load_model_and_generate_predictions(
 
     # Instantiate the data module
     batch_size = config.batch_size_per_device * num_devices
-    data_dir = DATA_DIR / f"obs_var_{config.observation_variance:.5f}"
+    data_dir = DATA_DIR / f"two_body_problem"
     data_module = SequenceDataModule(
         data_dir=data_dir,
         split=split,
@@ -229,9 +231,9 @@ def load_model_and_generate_predictions(
     sample = data_module.train[0]
     feature_dim = sample["input_sequence"].shape[-1]
     
-    ckpt_file_name = f"{pretrained}_pt__noise_finetune{model_num}_epoch_{checkpoint_epoch_num}"
+    ckpt_file_name = f"{pretrained}_pt_noise_finetune{model_num}-1mil_epoch_{checkpoint_epoch_num}"
     
-    model = load_model(config, feature_dim, ckpt_file_name)
+    model = load_model(config, feature_dim, ckpt_file_name, num_data_points)
     
     # Set up trainer for prediction
     trainer = Trainer(
@@ -259,7 +261,8 @@ def main(args):
     predictions = []
     for model_num in range(1, args.num_models + 1):
         prediction, data_dir = load_model_and_generate_predictions(
-            args.pretrained, args.split, model_num, args.checkpoint_epoch_num
+            args.pretrained, args.split, model_num, args.checkpoint_epoch_num,
+            args.num_data_points
         )
         print(prediction.shape)
         predictions.append(prediction)
@@ -268,7 +271,7 @@ def main(args):
 
     # Save predictions
     np.save(
-        data_dir / f"{args.pretrained}_noise_trained_model_predictions_{args.split}_epoch_{args.checkpoint_epoch_num}.npy",
+        data_dir / f"{args.pretrained}_noise_trained_model_predictions_{args.split}_epoch_{args.checkpoint_epoch_num}_data_points_{args.num_data_points}.npy",
         predictions
     )
 
@@ -293,6 +296,10 @@ if __name__ == "__main__":
         "--num_models",
         type=int,
         default=10,
+    )
+    parser.add_argument(
+        "--num_data_points",
+        type=int,
     )
     args = parser.parse_args()
     main(args)

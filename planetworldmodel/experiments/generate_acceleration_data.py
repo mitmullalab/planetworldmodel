@@ -33,12 +33,15 @@ def generate_data(
     traj_min, traj_max = np.inf, -np.inf
     obs_ls, force_ls, heavier_coord_ls, m_light_ls, m_heavy_ls, a_ls = [], [], [], [], [], []
     heavier_coord = None
-    if fix_heavier_object_across_sequences:
-        heavier_coord = np.array([0., 0.])  # Fix the heavier object at the origin
     for e in eccentricities:
         for _ in range(num_trajectories_per_eccentricity):
-            problem = random_two_body_problem(target_eccentricity=e, seed=seed)
+            problem = random_two_body_problem(target_eccentricity=e, seed=seed, unit_light_mass=True)
             seed += 1
+            if fix_heavier_object_across_sequences:
+                heavier_coord = np.array([0., 0.])  # Fix the heavier object at the origin
+            else:
+                rng = np.random.default_rng(seed)
+                heavier_coord = rng.normal(0, 5.0, 2)  # Randomly sample heavier object position
             obs, state = generate_trajectory_with_heavier_fixed(
                 problem, num_points, dt, rng=seed, heavier_coord=heavier_coord,
             )
@@ -151,7 +154,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_points",
         type=int,
-        default=1_000,
+        default=200,
         help="Number of points to generate along the orbit.",
     )
     parser.add_argument(
@@ -181,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dt",
         type=float,
-        default=10,  # 10 seconds
+        default=300,  # 10 seconds
         help="Time step in seconds between each point.",
     )
     parser.add_argument(

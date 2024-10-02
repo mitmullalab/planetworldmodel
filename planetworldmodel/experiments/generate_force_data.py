@@ -88,7 +88,6 @@ def main(args):
     scaled_force_x_tr = scale_force(force_x_tr, scaling_factor_x)
     scaled_force_y_tr = scale_force(force_y_tr, scaling_factor_y)
     force_vec_tr = np.stack([scaled_force_x_tr, scaled_force_y_tr], axis=-1)
-    force_magnitude_tr = np.linalg.norm(force_vec_tr, axis=-1)
     
     obs_val, state_val, heavier_val, m_light_val, m_heavy_val, seed = generate_data(
         args.num_points,
@@ -105,7 +104,6 @@ def main(args):
     scaled_force_x_val = scale_force(force_x_val, scaling_factor_x)
     scaled_force_y_val = scale_force(force_y_val, scaling_factor_y)
     force_vec_val = np.stack([scaled_force_x_val, scaled_force_y_val], axis=-1)
-    force_magnitude_val = np.linalg.norm(force_vec_val, axis=-1)
     
     obs_test, state_test, heavier_test, m_light_test, m_heavy_test, _ = generate_data(
         args.num_points,
@@ -122,19 +120,17 @@ def main(args):
     scaled_force_x_test = scale_force(force_x_test, scaling_factor_x)
     scaled_force_y_test = scale_force(force_y_test, scaling_factor_y)
     force_vec_test = np.stack([scaled_force_x_test, scaled_force_y_test], axis=-1)
-    force_magnitude_test = np.linalg.norm(force_vec_test, axis=-1)
-    breakpoint()
 
     # Save as a numpy file
-    data_dir = DATA_DIR / f"force_magnitudes"
+    data_dir = DATA_DIR / f"force_vectors"
     data_dir.mkdir(parents=True, exist_ok=True)
     file_name = "_heavier_fixed" if args.fix_heavier_object_across_sequences else ""
     np.save(data_dir / f"obs_train{file_name}.npy", obs_tr)
     np.save(data_dir / f"obs_val{file_name}.npy", obs_val)
     np.save(data_dir / f"obs_test{file_name}.npy", obs_test)
-    np.save(data_dir / f"force_train{file_name}.npy", force_magnitude_tr)
-    np.save(data_dir / f"force_val{file_name}.npy", force_magnitude_val)
-    np.save(data_dir / f"force_test{file_name}.npy", force_magnitude_test)
+    np.save(data_dir / f"force_train{file_name}.npy", force_vec_tr)
+    np.save(data_dir / f"force_val{file_name}.npy", force_vec_val)
+    np.save(data_dir / f"force_test{file_name}.npy", force_vec_test)
     np.save(data_dir / f"heavier_train{file_name}.npy", heavier_tr)
     np.save(data_dir / f"heavier_val{file_name}.npy", heavier_val)
     np.save(data_dir / f"heavier_test{file_name}.npy", heavier_test)
@@ -159,7 +155,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_train_trajectories_per_eccentricity",
         type=int,
-        default=1_000,
+        default=10_000,
         help="Number of trajectories to generate per eccentricity.",
     )
     parser.add_argument(
